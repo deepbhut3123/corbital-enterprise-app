@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "CorbitalEnterprise",
+    "slug": "corbital-enterprise-app",
+    "version": "1.0.0",
+    "platforms": ["android"],
+    "icon": "./assets/app-icon.png",
+    "splash": {
+      "image": "./assets/splash-logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "android": {
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/app-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    }
+  }
+}

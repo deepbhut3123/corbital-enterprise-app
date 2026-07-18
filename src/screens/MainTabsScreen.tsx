@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import AppTabBar, { type TabItem, type TabKey } from '../components/AppTabBar';
+import { fetchCurrentUser } from '../services/auth';
 import type { LoggedInUser, UserRecord } from '../services/auth';
 import {
   createUser,
@@ -17,8 +18,26 @@ import ProfileTabScreen from './tabs/ProfileTabScreen';
 import TargetsTabScreen from './tabs/TargetsTabScreen';
 import ValueEntriesTabScreen from './tabs/ValueEntriesTabScreen';
 
+function isSameUser(left: LoggedInUser, right: LoggedInUser) {
+  return left.id === right.id || left.email.toLowerCase() === right.email.toLowerCase();
+}
+
+function hasProfileChanged(left: LoggedInUser, right: LoggedInUser) {
+  return (
+    left.id !== right.id ||
+    left.username !== right.username ||
+    left.email !== right.email ||
+    left.phone !== right.phone ||
+    left.fixedSalary !== right.fixedSalary ||
+    left.variableSalary !== right.variableSalary ||
+    left.roleId !== right.roleId ||
+    left.authenticatorEnabled !== right.authenticatorEnabled
+  );
+}
+
 type MainTabsScreenProps = {
   onLogout: () => void;
+  onUpdateLoggedInUser: (updatedUser: LoggedInUser) => Promise<void>;
   paddingBottom: number;
   paddingTop: number;
   token: string;
@@ -27,6 +46,7 @@ type MainTabsScreenProps = {
 
 export default function MainTabsScreen({
   onLogout,
+  onUpdateLoggedInUser,
   paddingBottom,
   paddingTop,
   token,
@@ -55,24 +75,35 @@ export default function MainTabsScreen({
     variableSalary: '',
   });
 
-  const normalizedRoleId = user.roleId.trim().toLowerCase();
+  const currentUser = useMemo(
+    () => users.find(listUser => isSameUser(listUser, user)) ?? user,
+    [user, users],
+  );
+
+  const normalizedRoleId = currentUser.roleId.trim().toLowerCase();
   const isAdmin = normalizedRoleId === '1' || normalizedRoleId === 'admin';
 
   const summaryCards = useMemo(
     () => [
-      { label: 'Email', value: user.email },
-      { label: 'Phone', value: user.phone || '-' },
-      { label: 'Role', value: user.roleId === '1' ? 'Admin' : 'User' },
+      { label: 'Email', value: currentUser.email },
+      { label: 'Phone', value: currentUser.phone || '-' },
+      { label: 'Role', value: currentUser.roleId === '1' ? 'Admin' : 'User' },
       {
         label: 'Fixed Salary',
-        value: user.fixedSalary.toLocaleString('en-IN'),
+        value: currentUser.fixedSalary.toLocaleString('en-IN'),
       },
       {
         label: 'Variable Salary',
-        value: user.variableSalary.toLocaleString('en-IN'),
+        value: currentUser.variableSalary.toLocaleString('en-IN'),
       },
     ],
-    [user.email, user.fixedSalary, user.phone, user.roleId, user.variableSalary],
+    [
+      currentUser.email,
+      currentUser.fixedSalary,
+      currentUser.phone,
+      currentUser.roleId,
+      currentUser.variableSalary,
+    ],
   );
 
   const adminCount = useMemo(
@@ -98,14 +129,23 @@ export default function MainTabsScreen({
       setUsersError('');
       const data = await fetchUsers(token);
       setUsers(data);
+
+      const updatedCurrentUser = data.find(listUser => isSameUser(listUser, user));
+
+      if (updatedCurrentUser && hasProfileChanged(updatedCurrentUser, user)) {
+        await onUpdateLoggedInUser(updatedCurrentUser);
+      }
+
+      return data;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unable to load users.';
       setUsersError(message);
+      return null;
     } finally {
       setIsLoadingUsers(false);
     }
-  }, [token]);
+  }, [onUpdateLoggedInUser, token, user]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -180,6 +220,19 @@ export default function MainTabsScreen({
             listUser.id === updatedUser.id ? updatedUser : listUser,
           ),
         );
+
+        if (isSameUser(updatedUser, currentUser)) {
+          await onUpdateLoggedInUser(updatedUser);
+        }
+
+        const refreshedUsers = await loadUsers();
+        const refreshedCurrentUser = refreshedUsers?.find(listUser =>
+          isSameUser(listUser, currentUser),
+        );
+
+        if (refreshedCurrentUser && hasProfileChanged(refreshedCurrentUser, currentUser)) {
+          await onUpdateLoggedInUser(refreshedCurrentUser);
+        }
       } else {
         setIsCreatingUser(true);
         const createdUser = await createUser(form, token);
@@ -220,6 +273,9 @@ export default function MainTabsScreen({
       setIsRefreshing(true);
       setRefreshSignal(current => current + 1);
 
+      const refreshedCurrentUser = await fetchCurrentUser(token);
+      await onUpdateLoggedInUser(refreshedCurrentUser);
+
       if (isAdmin) {
         await loadUsers();
       }
@@ -231,7 +287,7 @@ export default function MainTabsScreen({
     } finally {
       setIsRefreshing(false);
     }
-  }, [isAdmin, loadUsers]);
+  }, [isAdmin, loadUsers, onUpdateLoggedInUser, token]);
 
   const tabItems: TabItem[] = isAdmin
     ? [
@@ -268,6 +324,11 @@ export default function MainTabsScreen({
           icon: activeTab === 'sales' ? 'cash' : 'cash-outline',
           key: 'sales',
           label: 'Values',
+        },
+        {
+          icon: activeTab === 'targets' ? 'flag' : 'flag-outline',
+          key: 'targets',
+          label: 'Targets',
         },
         {
           icon:
@@ -310,7 +371,7 @@ export default function MainTabsScreen({
             isAdmin={isAdmin}
             refreshSignal={refreshSignal}
             token={token}
-            user={user}
+            user={currentUser}
           />
         ) : activeTab === 'profile' ? (
           <View style={styles.profileTabContent}>
@@ -318,7 +379,7 @@ export default function MainTabsScreen({
               isAdmin={isAdmin}
               onLogout={onLogout}
               summaryCards={summaryCards}
-              user={user}
+              user={currentUser}
             />
           </View>
         ) : activeTab === 'manage' ? (
@@ -344,7 +405,7 @@ export default function MainTabsScreen({
             roleOptions={roleOptions}
             selectedUser={selectedUser}
             summaryCards={summaryCards}
-            user={user}
+            user={currentUser}
             users={users}
             usersError={usersError}
           />
@@ -360,13 +421,15 @@ export default function MainTabsScreen({
             isAdmin={isAdmin}
             refreshSignal={refreshSignal}
             token={token}
-            user={user}
+            user={currentUser}
             users={users}
           />
         ) : activeTab === 'targets' ? (
           <TargetsTabScreen
+            isAdmin={isAdmin}
             refreshSignal={refreshSignal}
             token={token}
+            user={currentUser}
             users={users}
           />
         ) : (

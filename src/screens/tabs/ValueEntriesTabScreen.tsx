@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -14,8 +15,10 @@ import {
 import type { LoggedInUser, UserRecord } from '../../services/auth';
 import {
   createValueEntry,
+  deleteValueEntry,
   fetchValueEntries,
   type ValueEntryRecord,
+  updateValueEntry,
 } from '../../services/valueEntries';
 
 const monthLabels = [
@@ -33,7 +36,7 @@ const monthLabels = [
   'December',
 ];
 
-type PickerType = 'day' | 'month' | 'user' | 'year' | null;
+type PickerType = 'day' | 'filterMonth' | 'filterYear' | 'month' | 'user' | 'year' | null;
 
 type ValueEntriesTabScreenProps = {
   isAdmin: boolean;
@@ -73,12 +76,16 @@ export default function ValueEntriesTabScreen({
   const [entriesError, setEntriesError] = useState('');
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
+  const [isDeletingEntryId, setIsDeletingEntryId] = useState<string | null>(null);
   const [isSavingEntry, setIsSavingEntry] = useState(false);
+  const [filterMonth, setFilterMonth] = useState(initialDate.month);
+  const [filterYear, setFilterYear] = useState(initialDate.year);
   const [month, setMonth] = useState(initialDate.month);
   const [pickerType, setPickerType] = useState<PickerType>(null);
   const [purchaseAmount, setPurchaseAmount] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
   const [sellAmount, setSellAmount] = useState('');
+  const [selectedEntry, setSelectedEntry] = useState<ValueEntryRecord | null>(null);
   const [year, setYear] = useState(initialDate.year);
 
   const userOptions = useMemo(
@@ -107,6 +114,18 @@ export default function ValueEntriesTabScreen({
         (_, index) => index + 1,
       ),
     [month, year],
+  );
+  const filteredEntries = useMemo(
+    () =>
+      entries.filter(entry => {
+        const entryDate = new Date(`${entry.entryDate}T00:00:00`);
+
+        return (
+          entryDate.getMonth() + 1 === filterMonth &&
+          entryDate.getFullYear() === filterYear
+        );
+      }),
+    [entries, filterMonth, filterYear],
   );
 
   const loadEntries = useCallback(async () => {
@@ -155,6 +174,7 @@ export default function ValueEntriesTabScreen({
     setPickerType(null);
     setPurchaseAmount('');
     setSellAmount('');
+    setSelectedEntry(null);
     setEntriesError('');
 
     if (!isAdmin) {
@@ -164,6 +184,21 @@ export default function ValueEntriesTabScreen({
 
   const openEntryModal = () => {
     resetFormState();
+    setIsModalVisible(true);
+  };
+
+  const openEditEntryModal = (entry: ValueEntryRecord) => {
+    const entryDate = new Date(`${entry.entryDate}T00:00:00`);
+
+    setSelectedEntry(entry);
+    setDay(entryDate.getDate());
+    setMonth(entryDate.getMonth() + 1);
+    setYear(entryDate.getFullYear());
+    setSelectedUserId(isAdmin ? entry.userId : '');
+    setPurchaseAmount(String(entry.purchaseAmount));
+    setSellAmount(String(entry.sellAmount));
+    setEntriesError('');
+    setPickerType(null);
     setIsModalVisible(true);
   };
 
@@ -182,17 +217,24 @@ export default function ValueEntriesTabScreen({
       setIsSavingEntry(true);
       setEntriesError('');
 
-      const savedEntry = await createValueEntry(
-        {
-          entryDate: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
-          purchaseAmount,
-          sellAmount,
-          userId: isAdmin ? selectedUserId : undefined,
-        },
-        token,
-      );
+      const entryInput = {
+        entryDate: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        purchaseAmount,
+        sellAmount,
+        userId: isAdmin ? selectedUserId : undefined,
+      };
+      const savedEntry = selectedEntry
+        ? await updateValueEntry(selectedEntry.id, entryInput, token)
+        : await createValueEntry(entryInput, token);
 
-      setEntries(current => [savedEntry, ...current]);
+      setEntries(current =>
+        selectedEntry
+          ? current.map(entry => (entry.id === savedEntry.id ? savedEntry : entry))
+          : [savedEntry, ...current],
+      );
+      setDetailEntry(current =>
+        current?.id === savedEntry.id ? savedEntry : current,
+      );
       setIsModalVisible(false);
       resetFormState();
     } catch (error) {
@@ -204,14 +246,49 @@ export default function ValueEntriesTabScreen({
     }
   };
 
+  const handleDeleteEntry = (entry: ValueEntryRecord) => {
+    Alert.alert(
+      'Delete Entry',
+      'Are you sure you want to delete this value entry?',
+      [
+        { style: 'cancel', text: 'Cancel' },
+        {
+          style: 'destructive',
+          text: 'Delete',
+          onPress: () => {
+            setIsDeletingEntryId(entry.id);
+            setEntriesError('');
+            deleteValueEntry(entry.id, token)
+              .then(() => {
+                setEntries(current =>
+                  current.filter(listEntry => listEntry.id !== entry.id),
+                );
+                setDetailEntry(current => (current?.id === entry.id ? null : current));
+              })
+              .catch(error => {
+                const message =
+                  error instanceof Error
+                    ? error.message
+                    : 'Unable to delete value entry.';
+                setEntriesError(message);
+              })
+              .finally(() => {
+                setIsDeletingEntryId(null);
+              });
+          },
+        },
+      ],
+    );
+  };
+
   const pickerTitle =
     pickerType === 'user'
       ? 'Select User'
       : pickerType === 'day'
         ? 'Select Day'
-        : pickerType === 'month'
+        : pickerType === 'filterMonth' || pickerType === 'month'
           ? 'Select Month'
-          : pickerType === 'year'
+          : pickerType === 'filterYear' || pickerType === 'year'
             ? 'Select Year'
             : '';
 
@@ -235,6 +312,27 @@ export default function ValueEntriesTabScreen({
           </Pressable>
         </View>
 
+        <View style={styles.topFilterRow}>
+          <Pressable
+            onPress={() => setPickerType('filterMonth')}
+            style={styles.topFilterControl}>
+            <Text style={styles.topFilterLabel}>Month</Text>
+            <View style={styles.topFilterValueRow}>
+              <Text style={styles.topFilterValue}>{monthLabels[filterMonth - 1]}</Text>
+              <Ionicons color="#7f1d1d" name="chevron-down" size={16} />
+            </View>
+          </Pressable>
+          <Pressable
+            onPress={() => setPickerType('filterYear')}
+            style={styles.topFilterControl}>
+            <Text style={styles.topFilterLabel}>Year</Text>
+            <View style={styles.topFilterValueRow}>
+              <Text style={styles.topFilterValue}>{filterYear}</Text>
+              <Ionicons color="#7f1d1d" name="chevron-down" size={16} />
+            </View>
+          </Pressable>
+        </View>
+
         {isLoadingEntries ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color="#dc2626" />
@@ -242,8 +340,8 @@ export default function ValueEntriesTabScreen({
           </View>
         ) : entriesError ? (
           <Text style={styles.errorText}>{entriesError}</Text>
-        ) : entries.length ? (
-          entries.map(entry => (
+        ) : filteredEntries.length ? (
+          filteredEntries.map(entry => (
             <Pressable
               key={entry.id}
               disabled={!isAdmin}
@@ -281,28 +379,45 @@ export default function ValueEntriesTabScreen({
                 ) : null}
               </View>
 
-              {isAdmin ? (
-                <Text style={styles.entryMeta}>Net Profit</Text>
-              ) : (
-                <View style={styles.amountRow}>
-                  <View style={styles.amountBox}>
-                    <Text style={styles.amountLabel}>Purchase</Text>
-                    <Text style={styles.amountValue}>
-                      Rs. {entry.purchaseAmount.toLocaleString('en-IN')}
-                    </Text>
-                  </View>
-                  <View style={styles.amountBox}>
-                    <Text style={styles.amountLabel}>Sell</Text>
-                    <Text style={styles.amountValue}>
-                      Rs. {entry.sellAmount.toLocaleString('en-IN')}
-                    </Text>
-                  </View>
+              <View style={styles.amountRow}>
+                <View style={styles.amountBox}>
+                  <Text style={styles.amountLabel}>Purchase</Text>
+                  <Text style={styles.amountValue}>
+                    Rs. {entry.purchaseAmount.toLocaleString('en-IN')}
+                  </Text>
                 </View>
-              )}
+                <View style={[styles.amountBox, styles.sellAmountBox]}>
+                  <Text style={styles.amountLabel}>Sell</Text>
+                  <Text style={styles.amountValue}>
+                    Rs. {entry.sellAmount.toLocaleString('en-IN')}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.cardActions}>
+                <Pressable
+                  onPress={() => openEditEntryModal(entry)}
+                  style={[styles.iconActionButton, styles.editActionButton]}>
+                  <Ionicons color="#7f1d1d" name="pencil" size={15} />
+                  <Text style={styles.editActionText}>Edit</Text>
+                </Pressable>
+                <Pressable
+                  disabled={isDeletingEntryId === entry.id}
+                  onPress={() => handleDeleteEntry(entry)}
+                  style={[styles.iconActionButton, styles.deleteActionButton]}>
+                  {isDeletingEntryId === entry.id ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <>
+                      <Ionicons color="#ffffff" name="trash-outline" size={15} />
+                      <Text style={styles.deleteActionText}>Delete</Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
             </Pressable>
           ))
         ) : (
-          <Text style={styles.emptyText}>No entries added yet.</Text>
+          <Text style={styles.emptyText}>No entries found for this month.</Text>
         )}
       </View>
 
@@ -319,7 +434,11 @@ export default function ValueEntriesTabScreen({
           style={styles.modalOverlay}>
           <Pressable onPress={() => undefined} style={styles.modalCard}>
             <Text style={styles.sectionTitle}>
-              {isAdmin ? 'Add Profit Entry' : 'Add My Entry'}
+              {selectedEntry
+                ? 'Edit Value Entry'
+                : isAdmin
+                  ? 'Add Profit Entry'
+                  : 'Add My Entry'}
             </Text>
             <Text style={styles.sectionCaption}>
               {isAdmin
@@ -419,7 +538,9 @@ export default function ValueEntriesTabScreen({
                   {isSavingEntry ? (
                     <ActivityIndicator color="#ffffff" />
                   ) : (
-                    <Text style={styles.saveButtonText}>Save Entry</Text>
+                    <Text style={styles.saveButtonText}>
+                      {selectedEntry ? 'Edit Entry' : 'Save Entry'}
+                    </Text>
                   )}
                 </Pressable>
               </View>
@@ -488,6 +609,29 @@ export default function ValueEntriesTabScreen({
             <Pressable onPress={() => setDetailEntry(null)} style={styles.fullWidthButton}>
               <Text style={styles.fullWidthButtonText}>Close</Text>
             </Pressable>
+            {detailEntry ? (
+              <View style={styles.detailActions}>
+                <Pressable
+                  onPress={() => openEditEntryModal(detailEntry)}
+                  style={[styles.iconActionButton, styles.editActionButton]}>
+                  <Ionicons color="#7f1d1d" name="pencil" size={15} />
+                  <Text style={styles.editActionText}>Edit</Text>
+                </Pressable>
+                <Pressable
+                  disabled={isDeletingEntryId === detailEntry.id}
+                  onPress={() => handleDeleteEntry(detailEntry)}
+                  style={[styles.iconActionButton, styles.deleteActionButton]}>
+                  {isDeletingEntryId === detailEntry.id ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <>
+                      <Ionicons color="#ffffff" name="trash-outline" size={15} />
+                      <Text style={styles.deleteActionText}>Delete</Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
+            ) : null}
           </Pressable>
         </Pressable>
       </Modal>
@@ -572,16 +716,23 @@ export default function ValueEntriesTabScreen({
                   })
                 : null}
 
-              {pickerType === 'month'
+              {pickerType === 'filterMonth' || pickerType === 'month'
                 ? monthLabels.map((label, index) => {
                     const optionMonth = index + 1;
-                    const isSelected = optionMonth === month;
+                    const isSelected =
+                      pickerType === 'filterMonth'
+                        ? optionMonth === filterMonth
+                        : optionMonth === month;
 
                     return (
                       <Pressable
                         key={label}
                         onPress={() => {
-                          setMonth(optionMonth);
+                          if (pickerType === 'filterMonth') {
+                            setFilterMonth(optionMonth);
+                          } else {
+                            setMonth(optionMonth);
+                          }
                           setPickerType(null);
                         }}
                         style={[
@@ -600,15 +751,22 @@ export default function ValueEntriesTabScreen({
                   })
                 : null}
 
-              {pickerType === 'year'
+              {pickerType === 'filterYear' || pickerType === 'year'
                 ? yearOptions.map(optionYear => {
-                    const isSelected = optionYear === year;
+                    const isSelected =
+                      pickerType === 'filterYear'
+                        ? optionYear === filterYear
+                        : optionYear === year;
 
                     return (
                       <Pressable
                         key={optionYear}
                         onPress={() => {
-                          setYear(optionYear);
+                          if (pickerType === 'filterYear') {
+                            setFilterYear(optionYear);
+                          } else {
+                            setYear(optionYear);
+                          }
                           setPickerType(null);
                         }}
                         style={[
@@ -650,7 +808,7 @@ const styles = StyleSheet.create({
   listCard: {
     backgroundColor: '#ffffff',
     borderColor: '#fecaca',
-    borderRadius: 28,
+    borderRadius: 22,
     borderWidth: 1,
     marginBottom: 20,
     padding: 20,
@@ -679,6 +837,39 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginLeft: 6,
   },
+  topFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 14,
+  },
+  topFilterControl: {
+    backgroundColor: '#fff7f5',
+    borderColor: '#fecaca',
+    borderRadius: 14,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: 130,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  topFilterLabel: {
+    color: '#9a3412',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  topFilterValueRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  topFilterValue: {
+    color: '#111827',
+    fontSize: 14,
+    fontWeight: '800',
+  },
   loadingState: {
     alignItems: 'center',
     paddingVertical: 28,
@@ -697,17 +888,23 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   entryCard: {
-    backgroundColor: '#fff7f5',
-    borderColor: '#fee2e2',
-    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    borderColor: '#fecaca',
+    borderRadius: 18,
     borderWidth: 1,
     marginBottom: 12,
-    padding: 14,
+    overflow: 'hidden',
+    padding: 0,
   },
   entryHeader: {
     alignItems: 'center',
+    backgroundColor: '#fff7f5',
+    borderBottomColor: '#fee2e2',
+    borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
   },
   entryHeaderContent: {
     flex: 1,
@@ -754,15 +951,59 @@ const styles = StyleSheet.create({
   amountRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+  cardActions: {
+    backgroundColor: '#fffafa',
+    borderTopColor: '#fee2e2',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    marginTop: 14,
+    padding: 12,
+  },
+  iconActionButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    minHeight: 42,
+    paddingHorizontal: 12,
+  },
+  editActionButton: {
+    backgroundColor: '#fff1ee',
+    borderColor: '#fecaca',
+    borderWidth: 1,
+  },
+  deleteActionButton: {
+    backgroundColor: '#dc2626',
+  },
+  editActionText: {
+    color: '#7f1d1d',
+    fontSize: 13,
+    fontWeight: '700',
+    marginLeft: 6,
+  },
+  deleteActionText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    marginLeft: 6,
   },
   amountBox: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#fff8f6',
     borderColor: '#fee2e2',
     borderRadius: 16,
     borderWidth: 1,
     flex: 1,
     padding: 12,
+  },
+  sellAmountBox: {
+    backgroundColor: '#f8fafc',
+    borderColor: '#e2e8f0',
   },
   amountLabel: {
     color: '#6b7280',
@@ -783,8 +1024,8 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     backgroundColor: '#ffffff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
     maxHeight: '86%',
     paddingBottom: 16,
     paddingHorizontal: 20,
@@ -931,6 +1172,12 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '700',
+  },
+  detailActions: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'flex-end',
+    marginTop: 12,
   },
   pickerOverlay: {
     backgroundColor: 'rgba(17, 24, 39, 0.35)',

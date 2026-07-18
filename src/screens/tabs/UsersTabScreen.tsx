@@ -176,7 +176,7 @@ export default function UsersTabScreen({
                   onPress={() => onEditUser(listUser)}
                   style={[styles.actionButton, styles.editButton]}>
                   <Ionicons color="#7f1d1d" name="pencil" size={15} />
-                  <Text style={styles.editActionText}>Update</Text>
+                  <Text style={styles.editActionText}>Edit</Text>
                 </Pressable>
                 <Pressable
                   disabled={
@@ -222,14 +222,14 @@ export default function UsersTabScreen({
         onRequestClose={onCloseModal}
         transparent
         visible={isModalVisible}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+        <Pressable onPress={onCloseModal} style={styles.modalOverlay}>
+          <Pressable onPress={() => {}} style={styles.modalCard}>
             <Text style={styles.modalTitle}>
-              {selectedUser ? 'Update User' : 'Add User'}
+              {selectedUser ? 'Edit User' : 'Add User'}
             </Text>
             <Text style={styles.modalSubtitle}>
               {selectedUser
-                ? 'Update user details from the admin panel.'
+                ? 'Edit user details from the admin panel.'
                 : 'Create a new employee account from the admin panel.'}
             </Text>
 
@@ -348,14 +348,14 @@ export default function UsersTabScreen({
                     <ActivityIndicator color="#ffffff" />
                   ) : (
                     <Text style={styles.primaryButtonText}>
-                      {selectedUser ? 'Update User' : 'Save User'}
+                      {selectedUser ? 'Edit User' : 'Save User'}
                     </Text>
                   )}
                 </Pressable>
               </View>
             </ScrollView>
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
     </>
   );
@@ -365,7 +365,7 @@ const styles = StyleSheet.create({
   adminPanel: {
     backgroundColor: '#ffffff',
     borderColor: '#fecaca',
-    borderRadius: 28,
+    borderRadius: 22,
     borderWidth: 1,
     padding: 20,
   },
@@ -407,7 +407,7 @@ const styles = StyleSheet.create({
   userCard: {
     backgroundColor: '#fffdfc',
     borderColor: '#fecaca',
-    borderRadius: 22,
+    borderRadius: 18,
     borderWidth: 1,
     marginBottom: 10,
     padding: 14,
@@ -573,7 +573,7 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 24,
+    borderRadius: 22,
     maxHeight: '84%',
     padding: 20,
     width: '100%',

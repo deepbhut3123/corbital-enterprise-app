@@ -13,7 +13,7 @@ import {
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import type { LoggedInUser } from '../../services/auth';
-import { fetchMyTarget, type TargetRecord } from '../../services/targets';
+import { fetchMyTarget, fetchTargets, type TargetRecord } from '../../services/targets';
 import { fetchValueEntries, type ValueEntryRecord } from '../../services/valueEntries';
 
 const monthLabels = [
@@ -50,6 +50,14 @@ type SalarySlice = {
   color: string;
   label: string;
   value: number;
+};
+
+type TargetSlice = {
+  achievedAmount: number;
+  color: string;
+  completionPercent: number;
+  label: string;
+  targetAmount: number;
 };
 
 const getInitialMonthYear = () => {
@@ -102,9 +110,9 @@ export default function HomeTabScreen({
   const entranceAnimation = useRef(new Animated.Value(0)).current;
   const progressAnimation = useRef(new Animated.Value(0)).current;
   const [adminError, setAdminError] = useState('');
-  const [adminEntryCount, setAdminEntryCount] = useState(0);
-  const [adminPositiveEntryCount, setAdminPositiveEntryCount] = useState(0);
+  const [adminSellTotal, setAdminSellTotal] = useState(0);
   const [adminSlices, setAdminSlices] = useState<ProfitSlice[]>([]);
+  const [adminTargetSlices, setAdminTargetSlices] = useState<TargetSlice[]>([]);
   const [isLoadingAdminChart, setIsLoadingAdminChart] = useState(false);
   const [isLoadingUserProgress, setIsLoadingUserProgress] = useState(false);
   const [isLoadingTarget, setIsLoadingTarget] = useState(false);
@@ -123,6 +131,18 @@ export default function HomeTabScreen({
     () => adminSlices.reduce((sum, slice) => sum + slice.value, 0),
     [adminSlices],
   );
+  const adminTargetTotal = useMemo(
+    () => adminTargetSlices.reduce((sum, slice) => sum + slice.targetAmount, 0),
+    [adminTargetSlices],
+  );
+  const adminTargetAchievedTotal = useMemo(
+    () => adminTargetSlices.reduce((sum, slice) => sum + slice.achievedAmount, 0),
+    [adminTargetSlices],
+  );
+  const adminTargetCompletionPercent =
+    adminTargetTotal > 0
+      ? Math.round(Math.min(adminTargetAchievedTotal / adminTargetTotal, 1) * 100)
+      : 0;
   const filteredUserEntries = useMemo(
     () =>
       userEntries.filter(entry => {
@@ -134,15 +154,15 @@ export default function HomeTabScreen({
       }),
     [month, userEntries, year],
   );
-  const currentNetProfit = useMemo(
+  const currentSellAmount = useMemo(
     () =>
-      filteredUserEntries.reduce((sum, entry) => sum + entry.netProfit, 0),
+      filteredUserEntries.reduce((sum, entry) => sum + entry.sellAmount, 0),
     [filteredUserEntries],
   );
   const targetAmount = target?.amount ?? 0;
-  const normalizedNetProfit = Math.max(currentNetProfit, 0);
+  const normalizedSellAmount = Math.max(currentSellAmount, 0);
   const targetCompletionRatio =
-    targetAmount > 0 ? Math.min(normalizedNetProfit / targetAmount, 1) : 0;
+    targetAmount > 0 ? Math.min(normalizedSellAmount / targetAmount, 1) : 0;
   const targetCompletionPercent = Math.round(targetCompletionRatio * 100);
   const earnedVariableSalary = Math.round(user.variableSalary * targetCompletionRatio);
   const remainingVariableSalary = Math.max(user.variableSalary - earnedVariableSalary, 0);
@@ -234,9 +254,11 @@ export default function HomeTabScreen({
     try {
       setIsLoadingAdminChart(true);
       setAdminError('');
-      const entries = await fetchValueEntries(token);
-      setAdminEntryCount(entries.length);
-      setAdminPositiveEntryCount(entries.filter(entry => entry.netProfit > 0).length);
+      const [entries, targetData] = await Promise.all([
+        fetchValueEntries(token),
+        fetchTargets(token),
+      ]);
+      setAdminSellTotal(entries.reduce((sum, entry) => sum + entry.sellAmount, 0));
       const totals = new Map<string, number>();
 
       entries.forEach(entry => {
@@ -260,14 +282,48 @@ export default function HomeTabScreen({
         }));
 
       setAdminSlices(sortedSlices);
+
+      const currentMonthTargets = targetData.filter(
+        targetItem =>
+          targetItem.month === initialMonthYear.month &&
+          targetItem.year === initialMonthYear.year,
+      );
+      const targetSlices = currentMonthTargets
+        .map((targetItem, index) => {
+          const achievedAmount = entries
+            .filter(entry => {
+              const entryDate = new Date(`${entry.entryDate}T00:00:00`);
+
+              return (
+                entry.userId === targetItem.userId &&
+                entryDate.getMonth() + 1 === targetItem.month &&
+                entryDate.getFullYear() === targetItem.year
+              );
+            })
+            .reduce((sum, entry) => sum + entry.sellAmount, 0);
+
+          return {
+            achievedAmount,
+            color: chartColors[index % chartColors.length],
+            completionPercent:
+              targetItem.amount > 0
+                ? Math.round(Math.min(achievedAmount / targetItem.amount, 1) * 100)
+                : 0,
+            label: targetItem.username,
+            targetAmount: targetItem.amount,
+          };
+        })
+        .sort((first, second) => second.completionPercent - first.completionPercent);
+
+      setAdminTargetSlices(targetSlices);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Unable to load profit chart.';
+        error instanceof Error ? error.message : 'Unable to load admin charts.';
       setAdminError(message);
     } finally {
       setIsLoadingAdminChart(false);
     }
-  }, [isAdmin, token]);
+  }, [initialMonthYear.month, initialMonthYear.year, isAdmin, token]);
 
   const loadTarget = useCallback(async () => {
     if (isAdmin) {
@@ -386,12 +442,22 @@ export default function HomeTabScreen({
               </Text>
             </View>
             <View style={styles.adminStatCard}>
-              <Text style={styles.adminStatLabel}>Total Entries</Text>
-              <Text style={styles.adminStatValue}>{adminEntryCount}</Text>
+              <Text style={styles.adminStatLabel}>Total Sell</Text>
+              <Text style={styles.adminStatValue}>
+                Rs. {Math.round(adminSellTotal).toLocaleString('en-IN')}
+              </Text>
             </View>
             <View style={styles.adminStatCard}>
-              <Text style={styles.adminStatLabel}>Positive Entries</Text>
-              <Text style={styles.adminStatValue}>{adminPositiveEntryCount}</Text>
+              <Text style={styles.adminStatLabel}>Target Amount</Text>
+              <Text style={styles.adminStatValue}>
+                Rs. {Math.round(adminTargetTotal).toLocaleString('en-IN')}
+              </Text>
+            </View>
+            <View style={styles.adminStatCard}>
+              <Text style={styles.adminStatLabel}>Target Achieved</Text>
+              <Text style={styles.adminStatValue}>
+                Rs. {Math.round(adminTargetAchievedTotal).toLocaleString('en-IN')}
+              </Text>
             </View>
           </View>
         </View>
@@ -466,6 +532,94 @@ export default function HomeTabScreen({
             </View>
           )}
         </View>
+
+        <View style={styles.adminProfitCard}>
+          <View style={styles.adminSectionHeader}>
+            <View>
+              <Text style={styles.homeTitle}>Target Overview</Text>
+              <Text style={styles.homeSubtitle}>
+                Current month target completion by user.
+              </Text>
+            </View>
+            <View style={styles.adminUsersPill}>
+              <Text style={styles.adminUsersPillText}>
+                {adminTargetCompletionPercent}% total
+              </Text>
+            </View>
+          </View>
+
+          {isLoadingAdminChart ? (
+            <View style={styles.loadingState}>
+              <ActivityIndicator color="#dc2626" />
+              <Text style={styles.loadingText}>Loading target chart...</Text>
+            </View>
+          ) : adminError ? (
+            <Text style={styles.errorText}>{adminError}</Text>
+          ) : adminTargetSlices.length ? (
+            <>
+              <View style={styles.adminProfitLayout}>
+                <View style={styles.adminPiePanel}>
+                  <Svg height={220} width={220} viewBox="0 0 220 220">
+                    <Circle cx="110" cy="110" fill="#fff4f2" r="84" />
+                    {(() => {
+                      let targetAngle = 0;
+                      const chartTotal = adminTargetTotal > 0 ? adminTargetTotal : 1;
+
+                      return adminTargetSlices.map(slice => {
+                        const sweepAngle = (slice.targetAmount / chartTotal) * 360;
+                        const path = buildSlicePath(
+                          110,
+                          110,
+                          84,
+                          targetAngle,
+                          targetAngle + sweepAngle,
+                        );
+                        targetAngle += sweepAngle;
+
+                        return <Path key={slice.label} d={path} fill={slice.color} />;
+                      });
+                    })()}
+                    <Circle cx="110" cy="110" fill="#ffffff" r="44" />
+                  </Svg>
+                  <View style={styles.adminChartCenter}>
+                    <Text style={styles.adminChartCenterCurrency}>Target</Text>
+                    <Text style={styles.adminChartCenterValue}>
+                      {adminTargetCompletionPercent}%
+                    </Text>
+                    <Text style={styles.adminChartCenterLabel}>Achieved</Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.adminLegendList}>
+                {adminTargetSlices.map(slice => (
+                  <View key={slice.label} style={styles.adminLegendRow}>
+                    <View style={styles.legendUserWrap}>
+                      <View style={[styles.adminLegendDot, { backgroundColor: slice.color }]} />
+                      <Text style={styles.adminLegendLabel}>{slice.label}</Text>
+                    </View>
+                    <View style={styles.legendValues}>
+                      <Text style={styles.adminLegendPercentage}>
+                        {slice.completionPercent}%
+                      </Text>
+                      <Text style={styles.adminLegendAmount}>
+                        Rs. {Math.round(slice.achievedAmount).toLocaleString('en-IN')} / Rs.{' '}
+                        {Math.round(slice.targetAmount).toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : (
+            <View style={styles.homePlaceholder}>
+              <Text style={styles.homePlaceholderText}>
+                No targets found for {monthLabels[initialMonthYear.month - 1]}{' '}
+                {initialMonthYear.year}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
     );
   }
@@ -487,7 +641,7 @@ export default function HomeTabScreen({
 
         <Text style={styles.executiveHeroTitle}>Salary Overview</Text>
         <Text style={styles.executiveHeroSubtitle}>
-          Track your monthly target, net profit, and compensation snapshot in one clean view.
+          Track your monthly target, sell amount, and compensation snapshot in one clean view.
         </Text>
 
         <View style={styles.executiveTopMetricRow}>
@@ -649,7 +803,7 @@ export default function HomeTabScreen({
               <View style={styles.insightTile}>
                 <Text style={styles.insightTileLabel}>Target Left</Text>
                 <Text style={styles.insightTileValue}>
-                  Rs. {Math.max(targetAmount - normalizedNetProfit, 0).toLocaleString('en-IN')}
+                  Rs. {Math.max(targetAmount - normalizedSellAmount, 0).toLocaleString('en-IN')}
                 </Text>
               </View>
               <View style={styles.insightTile}>
@@ -775,6 +929,7 @@ const styles = StyleSheet.create({
   },
   adminStatGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
   adminStatCard: {
@@ -782,7 +937,8 @@ const styles = StyleSheet.create({
     borderColor: '#fee2e2',
     borderRadius: 20,
     borderWidth: 1,
-    flex: 1,
+    flexBasis: '48%',
+    flexGrow: 1,
     paddingHorizontal: 12,
     paddingVertical: 14,
   },

@@ -28,6 +28,12 @@ type LoginResponse = {
   data?: AuthSession | TwoFactorChallenge;
 };
 
+type CurrentUserResponse = {
+  success: boolean;
+  message: string;
+  data?: LoggedInUser;
+};
+
 export async function loginUser(email: string, password: string, otp?: string) {
   const response = await fetch(buildApiUrl('/auth/login'), {
     method: 'POST',
@@ -49,6 +55,22 @@ export async function loginUser(email: string, password: string, otp?: string) {
 
   if (!payload.data.token || !payload.data.user) {
     throw new Error(payload.message || 'Login failed');
+  }
+
+  return payload.data;
+}
+
+export async function fetchCurrentUser(token: string) {
+  const response = await fetch(buildApiUrl('/auth/me'), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const payload = (await response.json()) as CurrentUserResponse;
+
+  if (!response.ok || !payload.success || !payload.data) {
+    throw new Error(payload.message || 'Failed to load current user');
   }
 
   return payload.data;

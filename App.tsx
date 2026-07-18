@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, StatusBar, useColorScheme } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { loginUser } from './src/services/auth';
+import { fetchCurrentUser, loginUser } from './src/services/auth';
 import type { LoggedInUser } from './src/services/auth';
 import { clearSession, loadSession, saveSession } from './src/services/session';
 import LoginScreen from './src/screens/LoginScreen';
@@ -37,7 +37,17 @@ function AppContent() {
 
         if (session?.token && session?.user) {
           setSessionToken(session.token);
-          setLoggedInUser(session.user);
+
+          try {
+            const currentUser = await fetchCurrentUser(session.token);
+            await saveSession({
+              ...session,
+              user: currentUser,
+            });
+            setLoggedInUser(currentUser);
+          } catch {
+            setLoggedInUser(session.user);
+          }
         }
       } finally {
         setIsBootstrapping(false);
@@ -100,6 +110,21 @@ function AppContent() {
     setIsTwoFactorStep(false);
   };
 
+  const handleUpdateLoggedInUser = useCallback(async (updatedUser: LoggedInUser) => {
+    if (!sessionToken) {
+      return;
+    }
+
+    const updatedSession = {
+      token: sessionToken,
+      tokenExpiresIn: null,
+      user: updatedUser,
+    };
+
+    await saveSession(updatedSession);
+    setLoggedInUser(updatedUser);
+  }, [sessionToken]);
+
   const contentPaddingStyle = {
     paddingTop: safeAreaInsets.top + 24,
     paddingBottom: safeAreaInsets.bottom + 24,
@@ -128,6 +153,7 @@ function AppContent() {
     return (
       <MainTabsScreen
         onLogout={handleLogout}
+        onUpdateLoggedInUser={handleUpdateLoggedInUser}
         paddingBottom={contentPaddingStyle.paddingBottom}
         paddingTop={contentPaddingStyle.paddingTop}
         token={sessionToken}

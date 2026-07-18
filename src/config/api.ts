@@ -1,7 +1,4 @@
-import { Platform } from 'react-native';
-
-const FALLBACK_API_URL =
-  Platform.OS === 'android' ? 'http://10.0.2.2:5000' : 'http://192.168.1.28:5000';
+const FALLBACK_API_URL = 'http://10.190.96.115:5000';
 
 const envApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 

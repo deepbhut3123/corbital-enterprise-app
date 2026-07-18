@@ -869,7 +869,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     backgroundColor: '#ffffff',
     borderColor: '#fecaca',
-    borderRadius: 24,
+    borderRadius: 20,
     borderWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -935,7 +935,7 @@ const styles = StyleSheet.create({
   filtersCard: {
     backgroundColor: '#ffffff',
     borderColor: '#fecaca',
-    borderRadius: 24,
+    borderRadius: 20,
     borderWidth: 1,
     padding: 18,
   },
@@ -943,7 +943,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#ffffff',
     borderColor: '#fecaca',
-    borderRadius: 24,
+    borderRadius: 20,
     borderWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1036,7 +1036,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   actionCard: {
-    borderRadius: 24,
+    borderRadius: 18,
     borderWidth: 1,
     minHeight: 108,
     paddingHorizontal: 14,
@@ -1103,7 +1103,7 @@ const styles = StyleSheet.create({
   recordsCard: {
     backgroundColor: '#ffffff',
     borderColor: '#fecaca',
-    borderRadius: 24,
+    borderRadius: 20,
     borderWidth: 1,
     padding: 18,
   },
@@ -1184,7 +1184,7 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 24,
+    borderRadius: 22,
     maxHeight: '84%',
     padding: 20,
     width: '100%',
@@ -1287,7 +1287,7 @@ const styles = StyleSheet.create({
   },
   pickerCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 24,
+    borderRadius: 20,
     maxHeight: '78%',
     padding: 20,
     width: '100%',

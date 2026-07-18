@@ -3,7 +3,10 @@
     "name": "CorbitalEnterprise",
     "slug": "corbital-enterprise-app",
     "version": "1.0.0",
-    "platforms": ["android"],
+    "platforms": [
+      "android",
+      "web"
+    ],
     "icon": "./assets/app-icon.png",
     "splash": {
       "image": "./assets/splash-logo.png",
@@ -11,11 +14,18 @@
       "backgroundColor": "#ffffff"
     },
     "android": {
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/app-icon.png",
         "backgroundColor": "#ffffff"
       }
-    }
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-font"
+    ]
   }
 }

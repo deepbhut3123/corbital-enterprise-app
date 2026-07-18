@@ -24,6 +24,11 @@ type TargetResponse = {
   data?: TargetRecord | null;
 };
 
+type DeleteTargetResponse = {
+  success: boolean;
+  message: string;
+};
+
 export type SaveTargetInput = {
   amount: string;
   month: number;
@@ -92,4 +97,19 @@ export async function saveTarget(input: SaveTargetInput, token: string) {
   }
 
   return payload.data;
+}
+
+export async function deleteTarget(targetId: string, token: string) {
+  const response = await fetch(buildApiUrl(`/targets/${targetId}`), {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const payload = (await response.json()) as DeleteTargetResponse;
+
+  if (!response.ok || !payload.success) {
+    throw new Error(payload.message || 'Failed to delete target');
+  }
 }

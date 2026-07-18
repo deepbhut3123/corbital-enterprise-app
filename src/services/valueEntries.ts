@@ -26,6 +26,11 @@ type ValueEntryResponse = {
   data?: ValueEntryRecord;
 };
 
+type DeleteValueEntryResponse = {
+  success: boolean;
+  message: string;
+};
+
 export type CreateValueEntryInput = {
   entryDate: string;
   purchaseAmount: string;
@@ -74,4 +79,47 @@ export async function createValueEntry(
   }
 
   return payload.data;
+}
+
+export async function updateValueEntry(
+  entryId: string,
+  input: CreateValueEntryInput,
+  token: string,
+) {
+  const response = await fetch(buildApiUrl(`/value-entries/${entryId}`), {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      entryDate: input.entryDate,
+      purchaseAmount: Number(input.purchaseAmount || 0),
+      sellAmount: Number(input.sellAmount || 0),
+      userId: input.userId,
+    }),
+  });
+
+  const payload = (await response.json()) as ValueEntryResponse;
+
+  if (!response.ok || !payload.success || !payload.data) {
+    throw new Error(payload.message || 'Failed to update value entry');
+  }
+
+  return payload.data;
+}
+
+export async function deleteValueEntry(entryId: string, token: string) {
+  const response = await fetch(buildApiUrl(`/value-entries/${entryId}`), {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const payload = (await response.json()) as DeleteValueEntryResponse;
+
+  if (!response.ok || !payload.success) {
+    throw new Error(payload.message || 'Failed to delete value entry');
+  }
 }

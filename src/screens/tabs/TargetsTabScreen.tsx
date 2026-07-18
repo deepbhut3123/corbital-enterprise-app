@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -11,8 +12,10 @@ import {
   View,
 } from 'react-native';
 
-import type { UserRecord } from '../../services/auth';
+import type { LoggedInUser, UserRecord } from '../../services/auth';
 import {
+  deleteTarget,
+  fetchMyTarget,
   fetchTargets,
   saveTarget,
   type TargetRecord,
@@ -35,8 +38,10 @@ const monthLabels = [
 ];
 
 type TargetsTabScreenProps = {
+  isAdmin: boolean;
   refreshSignal: number;
   token: string;
+  user: LoggedInUser;
   users: UserRecord[];
 };
 
@@ -50,8 +55,10 @@ const getInitialMonthYear = () => {
 };
 
 export default function TargetsTabScreen({
+  isAdmin,
   refreshSignal,
   token,
+  user,
   users,
 }: TargetsTabScreenProps) {
   const initialMonthYear = useMemo(() => getInitialMonthYear(), []);
@@ -60,8 +67,13 @@ export default function TargetsTabScreen({
   const [isLoadingTargetDetails, setIsLoadingTargetDetails] = useState(false);
   const [isTargetDetailsVisible, setIsTargetDetailsVisible] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
-  const [pickerType, setPickerType] = useState<'month' | 'user' | 'year' | null>(null);
+  const [isDeletingTargetId, setIsDeletingTargetId] = useState<string | null>(null);
+  const [pickerType, setPickerType] = useState<
+    'filterMonth' | 'filterYear' | 'month' | 'user' | 'year' | null
+  >(null);
   const [isSavingTarget, setIsSavingTarget] = useState(false);
+  const [filterMonth, setFilterMonth] = useState(initialMonthYear.month);
+  const [filterYear, setFilterYear] = useState(initialMonthYear.year);
   const [month, setMonth] = useState(initialMonthYear.month);
   const [selectedTarget, setSelectedTarget] = useState<TargetRecord | null>(null);
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -87,6 +99,13 @@ export default function TargetsTabScreen({
     () => userOptions.find(option => option.id === selectedUserId) ?? null,
     [selectedUserId, userOptions],
   );
+  const filteredTargets = useMemo(
+    () =>
+      targets.filter(
+        target => target.month === filterMonth && target.year === filterYear,
+      ),
+    [filterMonth, filterYear, targets],
+  );
   const selectedTargetAchievedAmount = useMemo(() => {
     if (!selectedTarget) {
       return 0;
@@ -101,7 +120,7 @@ export default function TargetsTabScreen({
           entryDate.getFullYear() === selectedTarget.year
         );
       })
-      .reduce((sum, entry) => sum + entry.netProfit, 0);
+      .reduce((sum, entry) => sum + entry.sellAmount, 0);
   }, [selectedTarget, targetEntries]);
   const selectedTargetCompletionPercent = useMemo(() => {
     if (!selectedTarget || selectedTarget.amount <= 0) {
@@ -114,17 +133,25 @@ export default function TargetsTabScreen({
   }, [selectedTarget, selectedTargetAchievedAmount]);
 
   useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
+
     if (!selectedUserId && userOptions.length) {
       setSelectedUserId(userOptions[0].id);
     }
-  }, [selectedUserId, userOptions]);
+  }, [isAdmin, selectedUserId, userOptions]);
 
   const loadTargets = useCallback(async () => {
     try {
       setIsLoadingTargets(true);
       setTargetsError('');
       const [targetData, valueEntryData] = await Promise.all([
-        fetchTargets(token),
+        isAdmin
+          ? fetchTargets(token)
+          : fetchMyTarget(token, filterMonth, filterYear).then(target =>
+              target ? [target] : [],
+            ),
         fetchValueEntries(token),
       ]);
       setTargets(targetData);
@@ -136,7 +163,7 @@ export default function TargetsTabScreen({
     } finally {
       setIsLoadingTargets(false);
     }
-  }, [token]);
+  }, [filterMonth, filterYear, isAdmin, token]);
 
   useEffect(() => {
     loadTargets().catch(() => {
@@ -149,11 +176,24 @@ export default function TargetsTabScreen({
     setMonth(initialMonthYear.month);
     setYear(initialMonthYear.year);
     setPickerType(null);
+    setSelectedTarget(null);
     setTargetsError('');
   };
 
   const openTargetModal = () => {
     resetFormState();
+    setIsModalVisible(true);
+  };
+
+  const openEditTargetModal = (target: TargetRecord) => {
+    setSelectedTarget(target);
+    setSelectedUserId(target.userId);
+    setMonth(target.month);
+    setYear(target.year);
+    setAmount(String(target.amount));
+    setTargetsError('');
+    setPickerType(null);
+    setIsTargetDetailsVisible(false);
     setIsModalVisible(true);
   };
 
@@ -208,6 +248,42 @@ export default function TargetsTabScreen({
     }
   };
 
+  const handleDeleteTarget = (target: TargetRecord) => {
+    Alert.alert(
+      'Delete Target',
+      'Are you sure you want to delete this target?',
+      [
+        { style: 'cancel', text: 'Cancel' },
+        {
+          style: 'destructive',
+          text: 'Delete',
+          onPress: () => {
+            setIsDeletingTargetId(target.id);
+            setTargetsError('');
+            deleteTarget(target.id, token)
+              .then(() => {
+                setTargets(current =>
+                  current.filter(listTarget => listTarget.id !== target.id),
+                );
+                setSelectedTarget(current =>
+                  current?.id === target.id ? null : current,
+                );
+                setIsTargetDetailsVisible(false);
+              })
+              .catch(error => {
+                const message =
+                  error instanceof Error ? error.message : 'Unable to delete target.';
+                setTargetsError(message);
+              })
+              .finally(() => {
+                setIsDeletingTargetId(null);
+              });
+          },
+        },
+      ],
+    );
+  };
+
   const openTargetDetails = (target: TargetRecord) => {
     setIsLoadingTargetDetails(true);
     setSelectedTarget(target);
@@ -218,9 +294,9 @@ export default function TargetsTabScreen({
   const pickerTitle =
     pickerType === 'user'
       ? 'Select User'
-      : pickerType === 'month'
+      : pickerType === 'filterMonth' || pickerType === 'month'
         ? 'Select Month'
-        : pickerType === 'year'
+        : pickerType === 'filterYear' || pickerType === 'year'
           ? 'Select Year'
           : '';
 
@@ -231,12 +307,37 @@ export default function TargetsTabScreen({
           <View style={styles.listHeaderContent}>
             <Text style={styles.sectionTitle}>Target List</Text>
             <Text style={styles.sectionCaption}>
-              All saved user targets are listed here.
+              {isAdmin
+                ? 'All saved user targets are listed here.'
+                : 'Your target summary for the selected month is listed here.'}
             </Text>
           </View>
-          <Pressable onPress={openTargetModal} style={styles.openModalButton}>
-            <Ionicons color="#ffffff" name="add" size={18} />
-            <Text style={styles.openModalButtonText}>Set Target</Text>
+          {isAdmin ? (
+            <Pressable onPress={openTargetModal} style={styles.openModalButton}>
+              <Ionicons color="#ffffff" name="add" size={18} />
+              <Text style={styles.openModalButtonText}>Set Target</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <View style={styles.topFilterRow}>
+          <Pressable
+            onPress={() => setPickerType('filterMonth')}
+            style={styles.topFilterControl}>
+            <Text style={styles.topFilterLabel}>Month</Text>
+            <View style={styles.topFilterValueRow}>
+              <Text style={styles.topFilterValue}>{monthLabels[filterMonth - 1]}</Text>
+              <Ionicons color="#7f1d1d" name="chevron-down" size={16} />
+            </View>
+          </Pressable>
+          <Pressable
+            onPress={() => setPickerType('filterYear')}
+            style={styles.topFilterControl}>
+            <Text style={styles.topFilterLabel}>Year</Text>
+            <View style={styles.topFilterValueRow}>
+              <Text style={styles.topFilterValue}>{filterYear}</Text>
+              <Ionicons color="#7f1d1d" name="chevron-down" size={16} />
+            </View>
           </Pressable>
         </View>
 
@@ -245,8 +346,8 @@ export default function TargetsTabScreen({
             <ActivityIndicator color="#dc2626" />
             <Text style={styles.loadingText}>Loading targets...</Text>
           </View>
-        ) : targets.length ? (
-          targets.map(target => (
+        ) : filteredTargets.length ? (
+          filteredTargets.map(target => (
             <Pressable
               key={target.id}
               onPress={() => openTargetDetails(target)}
@@ -262,16 +363,47 @@ export default function TargetsTabScreen({
                   </Text>
                 </View>
               </View>
-              <Text style={styles.targetAmount}>
-                Rs. {target.amount.toLocaleString('en-IN')}
-              </Text>
-              <Text style={styles.targetSetter}>
-                Set by {target.setByName || 'Admin'}
-              </Text>
+              <View style={styles.targetSummaryRow}>
+                <View style={styles.targetAmountPanel}>
+                  <Text style={styles.targetSummaryLabel}>Target Amount</Text>
+                  <Text style={styles.targetAmount}>
+                    Rs. {target.amount.toLocaleString('en-IN')}
+                  </Text>
+                </View>
+                <View style={styles.targetSetterPanel}>
+                  <Text style={styles.targetSummaryLabel}>Set By</Text>
+                  <Text style={styles.targetSetter}>
+                    {target.setByName || (isAdmin ? 'Admin' : user.username)}
+                  </Text>
+                </View>
+              </View>
+              {isAdmin ? (
+                <View style={styles.cardActions}>
+                  <Pressable
+                    onPress={() => openEditTargetModal(target)}
+                    style={[styles.iconActionButton, styles.editActionButton]}>
+                    <Ionicons color="#7f1d1d" name="pencil" size={15} />
+                    <Text style={styles.editActionText}>Edit</Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={isDeletingTargetId === target.id}
+                    onPress={() => handleDeleteTarget(target)}
+                    style={[styles.iconActionButton, styles.deleteActionButton]}>
+                    {isDeletingTargetId === target.id ? (
+                      <ActivityIndicator color="#ffffff" size="small" />
+                    ) : (
+                      <>
+                        <Ionicons color="#ffffff" name="trash-outline" size={15} />
+                        <Text style={styles.deleteActionText}>Delete</Text>
+                      </>
+                    )}
+                  </Pressable>
+                </View>
+              ) : null}
             </Pressable>
           ))
         ) : (
-          <Text style={styles.emptyText}>No targets saved yet.</Text>
+          <Text style={styles.emptyText}>No targets found for this month.</Text>
         )}
       </View>
 
@@ -280,9 +412,16 @@ export default function TargetsTabScreen({
         onRequestClose={() => setIsModalVisible(false)}
         transparent
         visible={isModalVisible}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.sectionTitle}>Set Monthly Target</Text>
+        <Pressable
+          onPress={() => {
+            setIsModalVisible(false);
+            resetFormState();
+          }}
+          style={styles.modalOverlay}>
+          <Pressable onPress={() => {}} style={styles.modalCard}>
+            <Text style={styles.sectionTitle}>
+              {selectedTarget ? 'Edit Monthly Target' : 'Set Monthly Target'}
+            </Text>
             <Text style={styles.sectionCaption}>
               Select a user, choose month and year, then save the target amount.
             </Text>
@@ -357,13 +496,15 @@ export default function TargetsTabScreen({
                   {isSavingTarget ? (
                     <ActivityIndicator color="#ffffff" />
                   ) : (
-                    <Text style={styles.saveButtonText}>Save Target</Text>
+                    <Text style={styles.saveButtonText}>
+                      {selectedTarget ? 'Edit Target' : 'Save Target'}
+                    </Text>
                   )}
                 </Pressable>
               </View>
             </ScrollView>
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
 
       <Modal
@@ -419,16 +560,23 @@ export default function TargetsTabScreen({
                   })
                 : null}
 
-              {pickerType === 'month'
+              {pickerType === 'filterMonth' || pickerType === 'month'
                 ? monthLabels.map((label, index) => {
                     const optionMonth = index + 1;
-                    const isSelected = optionMonth === month;
+                    const isSelected =
+                      pickerType === 'filterMonth'
+                        ? optionMonth === filterMonth
+                        : optionMonth === month;
 
                     return (
                       <Pressable
                         key={label}
                         onPress={() => {
-                          setMonth(optionMonth);
+                          if (pickerType === 'filterMonth') {
+                            setFilterMonth(optionMonth);
+                          } else {
+                            setMonth(optionMonth);
+                          }
                           setPickerType(null);
                         }}
                         style={[
@@ -447,15 +595,22 @@ export default function TargetsTabScreen({
                   })
                 : null}
 
-              {pickerType === 'year'
+              {pickerType === 'filterYear' || pickerType === 'year'
                 ? yearOptions.map(optionYear => {
-                    const isSelected = optionYear === year;
+                    const isSelected =
+                      pickerType === 'filterYear'
+                        ? optionYear === filterYear
+                        : optionYear === year;
 
                     return (
                       <Pressable
                         key={optionYear}
                         onPress={() => {
-                          setYear(optionYear);
+                          if (pickerType === 'filterYear') {
+                            setFilterYear(optionYear);
+                          } else {
+                            setYear(optionYear);
+                          }
                           setPickerType(null);
                         }}
                         style={[
@@ -531,16 +686,37 @@ export default function TargetsTabScreen({
                   </View>
                 )}
 
-                <View style={styles.modalActions}>
-                  <Pressable
-                    onPress={() => {
-                      setIsTargetDetailsVisible(false);
-                      setSelectedTarget(null);
-                    }}
-                    style={styles.saveButton}>
-                    <Text style={styles.saveButtonText}>Close</Text>
-                  </Pressable>
-                </View>
+                <Pressable
+                  onPress={() => {
+                    setIsTargetDetailsVisible(false);
+                    setSelectedTarget(null);
+                  }}
+                  style={styles.fullWidthButton}>
+                  <Text style={styles.fullWidthButtonText}>Close</Text>
+                </Pressable>
+                {isAdmin ? (
+                  <View style={styles.detailActions}>
+                    <Pressable
+                      onPress={() => openEditTargetModal(selectedTarget)}
+                      style={[styles.iconActionButton, styles.editActionButton]}>
+                      <Ionicons color="#7f1d1d" name="pencil" size={15} />
+                      <Text style={styles.editActionText}>Edit</Text>
+                    </Pressable>
+                    <Pressable
+                      disabled={isDeletingTargetId === selectedTarget.id}
+                      onPress={() => handleDeleteTarget(selectedTarget)}
+                      style={[styles.iconActionButton, styles.deleteActionButton]}>
+                      {isDeletingTargetId === selectedTarget.id ? (
+                        <ActivityIndicator color="#ffffff" size="small" />
+                      ) : (
+                        <>
+                          <Ionicons color="#ffffff" name="trash-outline" size={15} />
+                          <Text style={styles.deleteActionText}>Delete</Text>
+                        </>
+                      )}
+                    </Pressable>
+                  </View>
+                ) : null}
               </>
             ) : null}
           </View>
@@ -586,6 +762,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     marginLeft: 6,
+  },
+  topFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 14,
+  },
+  topFilterControl: {
+    backgroundColor: '#fff7f5',
+    borderColor: '#fecaca',
+    borderRadius: 14,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: 130,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  topFilterLabel: {
+    color: '#9a3412',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  topFilterValueRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  topFilterValue: {
+    color: '#111827',
+    fontSize: 14,
+    fontWeight: '800',
   },
   filterRow: {
     flexDirection: 'row',
@@ -677,7 +886,7 @@ const styles = StyleSheet.create({
   listCard: {
     backgroundColor: '#ffffff',
     borderColor: '#fecaca',
-    borderRadius: 28,
+    borderRadius: 22,
     borderWidth: 1,
     padding: 20,
   },
@@ -691,8 +900,8 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     backgroundColor: '#ffffff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
     maxHeight: '85%',
     paddingHorizontal: 20,
     paddingTop: 20,
@@ -752,18 +961,23 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   targetRow: {
-    backgroundColor: '#fff7f5',
-    borderColor: '#fee2e2',
-    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    borderColor: '#fecaca',
+    borderRadius: 18,
     borderWidth: 1,
     marginBottom: 12,
-    padding: 14,
+    overflow: 'hidden',
+    padding: 0,
   },
   targetHeader: {
     alignItems: 'center',
+    backgroundColor: '#fff7f5',
+    borderBottomColor: '#fee2e2',
+    borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
   },
   targetName: {
     color: '#111827',
@@ -786,15 +1000,83 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
+  targetSummaryRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+  targetAmountPanel: {
+    backgroundColor: '#fff8f6',
+    borderColor: '#fee2e2',
+    borderRadius: 16,
+    borderWidth: 1,
+    flex: 1.2,
+    padding: 12,
+  },
+  targetSetterPanel: {
+    backgroundColor: '#f8fafc',
+    borderColor: '#e2e8f0',
+    borderRadius: 16,
+    borderWidth: 1,
+    flex: 0.8,
+    padding: 12,
+  },
+  targetSummaryLabel: {
+    color: '#6b7280',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 5,
+    textTransform: 'uppercase',
+  },
   targetAmount: {
     color: '#111827',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
-    marginBottom: 6,
   },
   targetSetter: {
-    color: '#6b7280',
-    fontSize: 12,
+    color: '#111827',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  cardActions: {
+    backgroundColor: '#fffafa',
+    borderTopColor: '#fee2e2',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    marginTop: 14,
+    padding: 12,
+  },
+  iconActionButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    minHeight: 42,
+    paddingHorizontal: 12,
+  },
+  editActionButton: {
+    backgroundColor: '#fff1ee',
+    borderColor: '#fecaca',
+    borderWidth: 1,
+  },
+  deleteActionButton: {
+    backgroundColor: '#dc2626',
+  },
+  editActionText: {
+    color: '#7f1d1d',
+    fontSize: 13,
+    fontWeight: '700',
+    marginLeft: 6,
+  },
+  deleteActionText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    marginLeft: 6,
   },
   targetDetailsWrap: {
     gap: 12,
@@ -852,6 +1134,24 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     fontSize: 15,
     fontWeight: '600',
+  },
+  fullWidthButton: {
+    alignItems: 'center',
+    backgroundColor: '#111827',
+    borderRadius: 16,
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  fullWidthButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  detailActions: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'flex-end',
+    marginTop: 12,
   },
   saveButton: {
     alignItems: 'center',

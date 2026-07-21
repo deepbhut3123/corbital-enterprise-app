@@ -22,6 +22,8 @@ export type AttendanceRecord = {
   createdAt?: string;
   id: string;
   logs: AttendanceLog[];
+  status?: 'absent' | 'half_day' | 'holiday' | 'present' | 'sunday';
+  statusLabel?: string;
   totalMinutes: number;
   userEmail: string;
   userId: string;
@@ -130,4 +132,3 @@ export async function createAttendanceAction(
 
   return payload.data;
 }
-

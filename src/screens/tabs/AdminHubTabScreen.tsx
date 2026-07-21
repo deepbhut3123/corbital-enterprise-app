@@ -1,8 +1,11 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { LoggedInUser, UserRecord } from '../../services/auth';
+import type { HolidayInput, HolidayRecord } from '../../services/holidays';
 import type { CreateUserInput } from '../../services/users';
+import HolidaysTabScreen from './HolidaysTabScreen';
 import ProfileTabScreen from './ProfileTabScreen';
+import ReportsTabScreen from './ReportsTabScreen';
 import UsersTabScreen from './UsersTabScreen';
 
 type RoleOption = {
@@ -11,22 +14,31 @@ type RoleOption = {
 };
 
 type AdminHubTabScreenProps = {
-  activeSection: 'profile' | 'users';
+  activeSection: 'holidays' | 'profile' | 'reports' | 'users';
   adminCount: number;
   form: CreateUserInput;
+  holidayForm: HolidayInput;
+  holidays: HolidayRecord[];
+  holidaysError: string;
   isCreatingUser: boolean;
   isDeletingUserId: string | null;
+  isDeletingHolidayId: string | null;
+  isLoadingHolidays: boolean;
   isLoadingUsers: boolean;
   isModalVisible: boolean;
+  isSavingHoliday: boolean;
   isUpdatingUser: boolean;
   modalError: string;
-  onChangeSection: (section: 'profile' | 'users') => void;
+  onChangeSection: (section: 'holidays' | 'profile' | 'reports' | 'users') => void;
   onCloseModal: () => void;
+  onDeleteHoliday: (holiday: HolidayRecord) => void;
   onDeleteUser: (user: UserRecord) => void;
   onEditUser: (user: UserRecord) => void;
   onLogout: () => void;
   onOpenModal: () => void;
   onResetForm: () => void;
+  onSaveHoliday: () => void;
+  onUpdateHolidayForm: (key: keyof HolidayInput, value: string) => void;
   onSaveUser: () => void;
   onUpdateForm: (key: keyof CreateUserInput, value: string) => void;
   roleOptions: RoleOption[];
@@ -35,6 +47,7 @@ type AdminHubTabScreenProps = {
     label: string;
     value: string;
   }>;
+  token: string;
   user: LoggedInUser;
   users: UserRecord[];
   usersError: string;
@@ -44,24 +57,34 @@ export default function AdminHubTabScreen({
   activeSection,
   adminCount,
   form,
+  holidayForm,
+  holidays,
+  holidaysError,
   isCreatingUser,
   isDeletingUserId,
+  isDeletingHolidayId,
+  isLoadingHolidays,
   isLoadingUsers,
   isModalVisible,
+  isSavingHoliday,
   isUpdatingUser,
   modalError,
   onChangeSection,
   onCloseModal,
+  onDeleteHoliday,
   onDeleteUser,
   onEditUser,
   onLogout,
   onOpenModal,
   onResetForm,
+  onSaveHoliday,
+  onUpdateHolidayForm,
   onSaveUser,
   onUpdateForm,
   roleOptions,
   selectedUser,
   summaryCards,
+  token,
   user,
   users,
   usersError,
@@ -97,6 +120,34 @@ export default function AdminHubTabScreen({
             Users
           </Text>
         </Pressable>
+        <Pressable
+          onPress={() => onChangeSection('holidays')}
+          style={[
+            styles.sectionTabButton,
+            activeSection === 'holidays' && styles.sectionTabButtonActive,
+          ]}>
+          <Text
+            style={[
+              styles.sectionTabText,
+              activeSection === 'holidays' && styles.sectionTabTextActive,
+            ]}>
+            Holidays
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => onChangeSection('reports')}
+          style={[
+            styles.sectionTabButton,
+            activeSection === 'reports' && styles.sectionTabButtonActive,
+          ]}>
+          <Text
+            style={[
+              styles.sectionTabText,
+              activeSection === 'reports' && styles.sectionTabTextActive,
+            ]}>
+            Reports
+          </Text>
+        </Pressable>
       </View>
 
       {activeSection === 'profile' ? (
@@ -106,6 +157,20 @@ export default function AdminHubTabScreen({
           summaryCards={summaryCards}
           user={user}
         />
+      ) : activeSection === 'holidays' ? (
+        <HolidaysTabScreen
+          form={holidayForm}
+          holidays={holidays}
+          holidaysError={holidaysError}
+          isDeletingHolidayId={isDeletingHolidayId}
+          isLoadingHolidays={isLoadingHolidays}
+          isSavingHoliday={isSavingHoliday}
+          onDeleteHoliday={onDeleteHoliday}
+          onSaveHoliday={onSaveHoliday}
+          onUpdateForm={onUpdateHolidayForm}
+        />
+      ) : activeSection === 'reports' ? (
+        <ReportsTabScreen token={token} users={users} />
       ) : (
         <UsersTabScreen
           adminCount={adminCount}

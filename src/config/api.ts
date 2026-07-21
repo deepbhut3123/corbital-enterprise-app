@@ -1,4 +1,4 @@
-const FALLBACK_API_URL = 'http://10.190.96.115:5000';
+const FALLBACK_API_URL = 'http://192.168.1.35:5000';
 
 const envApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 

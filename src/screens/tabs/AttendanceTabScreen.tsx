@@ -156,6 +156,48 @@ const formatDateLabel = (attendanceDate: string) => {
   return `${date.getDate()} ${monthLabels[date.getMonth()]} ${date.getFullYear()}`;
 };
 
+const statusStyleMap = {
+  absent: {
+    backgroundColor: '#fee2e2',
+    color: '#991b1b',
+  },
+  half_day: {
+    backgroundColor: '#fef3c7',
+    color: '#92400e',
+  },
+  holiday: {
+    backgroundColor: '#dbeafe',
+    color: '#1d4ed8',
+  },
+  present: {
+    backgroundColor: '#dcfce7',
+    color: '#166534',
+  },
+  sunday: {
+    backgroundColor: '#e0e7ff',
+    color: '#3730a3',
+  },
+};
+
+const getAttendanceStatusLabel = (record: AttendanceRecord) => {
+  if (record.statusLabel) {
+    return record.statusLabel;
+  }
+
+  if (!record.logs.length) {
+    return 'Absent';
+  }
+
+  const workedMinutes = Math.floor(
+    calculateWorkedMilliseconds(record, Date.now()) / 60000,
+  );
+
+  return workedMinutes >= 510 ? 'Present' : 'Half Day';
+};
+
+const getAttendanceStatusStyle = (record: AttendanceRecord) =>
+  statusStyleMap[record.status || 'absent'];
+
 const formatTimeLabel = (value: string) => {
   const date = new Date(value);
 
@@ -589,6 +631,22 @@ export default function AttendanceTabScreen({
                       ? `${formatDateLabel(record.attendanceDate)} • ${record.userEmail}`
                       : `${record.logs.length} updates`}
                   </Text>
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      {
+                        backgroundColor:
+                          getAttendanceStatusStyle(record).backgroundColor,
+                      },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.statusBadgeText,
+                        { color: getAttendanceStatusStyle(record).color },
+                      ]}>
+                      {getAttendanceStatusLabel(record)}
+                    </Text>
+                  </View>
                   {isAttendanceRecordActive(record) ? (
                     <Text style={styles.liveStatusText}>Running</Text>
                   ) : null}
@@ -649,6 +707,22 @@ export default function AttendanceTabScreen({
               {detailRecord ? (
                 <>
                   <View style={styles.detailSummaryCard}>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        {
+                          backgroundColor:
+                            getAttendanceStatusStyle(detailRecord).backgroundColor,
+                        },
+                      ]}>
+                      <Text
+                        style={[
+                          styles.statusBadgeText,
+                          { color: getAttendanceStatusStyle(detailRecord).color },
+                        ]}>
+                        {getAttendanceStatusLabel(detailRecord)}
+                      </Text>
+                    </View>
                     <Text style={styles.detailSummaryLabel}>Total Time</Text>
                     <Text style={styles.detailSummaryValue}>
                       {formatDuration(
@@ -1155,6 +1229,17 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     fontSize: 12,
     marginTop: 4,
+  },
+  statusBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
   },
   liveStatusText: {
     color: '#15803d',

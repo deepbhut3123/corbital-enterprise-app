@@ -5,6 +5,13 @@ import AppTabBar, { type TabItem, type TabKey } from '../components/AppTabBar';
 import { fetchCurrentUser } from '../services/auth';
 import type { LoggedInUser, UserRecord } from '../services/auth';
 import {
+  deleteHoliday,
+  fetchHolidays,
+  saveHoliday,
+  type HolidayInput,
+  type HolidayRecord,
+} from '../services/holidays';
+import {
   createUser,
   deleteUser,
   fetchUsers,
@@ -53,12 +60,23 @@ export default function MainTabsScreen({
   user,
 }: MainTabsScreenProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('home');
-  const [adminSection, setAdminSection] = useState<'profile' | 'users'>('users');
+  const [adminSection, setAdminSection] = useState<
+    'holidays' | 'profile' | 'reports' | 'users'
+  >('users');
+  const [holidayForm, setHolidayForm] = useState<HolidayInput>({
+    holidayDate: '',
+    name: '',
+  });
+  const [holidays, setHolidays] = useState<HolidayRecord[]>([]);
+  const [holidaysError, setHolidaysError] = useState('');
   const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [isDeletingHolidayId, setIsDeletingHolidayId] = useState<string | null>(null);
   const [isDeletingUserId, setIsDeletingUserId] = useState<string | null>(null);
+  const [isLoadingHolidays, setIsLoadingHolidays] = useState(false);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSavingHoliday, setIsSavingHoliday] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [isUpdatingUser, setIsUpdatingUser] = useState(false);
   const [modalError, setModalError] = useState('');
@@ -82,6 +100,12 @@ export default function MainTabsScreen({
 
   const normalizedRoleId = currentUser.roleId.trim().toLowerCase();
   const isAdmin = normalizedRoleId === '1' || normalizedRoleId === 'admin';
+
+  useEffect(() => {
+    if (!isAdmin && activeTab === 'targets') {
+      setActiveTab('home');
+    }
+  }, [activeTab, isAdmin]);
 
   const summaryCards = useMemo(
     () => [
@@ -147,6 +171,23 @@ export default function MainTabsScreen({
     }
   }, [onUpdateLoggedInUser, token, user]);
 
+  const loadHolidays = useCallback(async () => {
+    try {
+      setIsLoadingHolidays(true);
+      setHolidaysError('');
+      const data = await fetchHolidays(token);
+      setHolidays(data);
+      return data;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to load holidays.';
+      setHolidaysError(message);
+      return null;
+    } finally {
+      setIsLoadingHolidays(false);
+    }
+  }, [token]);
+
   useEffect(() => {
     if (!isAdmin) {
       return;
@@ -155,13 +196,30 @@ export default function MainTabsScreen({
     loadUsers().catch(() => {
       // loadUsers already stores a user-facing error message in state.
     });
-  }, [isAdmin, loadUsers]);
+    loadHolidays().catch(() => {
+      // loadHolidays already stores a user-facing error message in state.
+    });
+  }, [isAdmin, loadHolidays, loadUsers]);
 
   const updateForm = (key: keyof CreateUserInput, value: string) => {
     setForm(current => ({
       ...current,
       [key]: value,
     }));
+  };
+
+  const updateHolidayForm = (key: keyof HolidayInput, value: string) => {
+    setHolidayForm(current => ({
+      ...current,
+      [key]: value,
+    }));
+  };
+
+  const resetHolidayForm = () => {
+    setHolidayForm({
+      holidayDate: '',
+      name: '',
+    });
   };
 
   const resetForm = () => {
@@ -268,6 +326,50 @@ export default function MainTabsScreen({
     }
   };
 
+  const handleSaveHoliday = async () => {
+    if (!holidayForm.holidayDate.trim() || !holidayForm.name.trim()) {
+      setHolidaysError('Holiday date and name are required.');
+      return;
+    }
+
+    try {
+      setIsSavingHoliday(true);
+      setHolidaysError('');
+      const savedHoliday = await saveHoliday(holidayForm, token);
+      setHolidays(current => {
+        const withoutExisting = current.filter(
+          holiday => holiday.holidayDate !== savedHoliday.holidayDate,
+        );
+
+        return [...withoutExisting, savedHoliday].sort((left, right) =>
+          left.holidayDate.localeCompare(right.holidayDate),
+        );
+      });
+      resetHolidayForm();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to save holiday.';
+      setHolidaysError(message);
+    } finally {
+      setIsSavingHoliday(false);
+    }
+  };
+
+  const handleDeleteHoliday = async (holiday: HolidayRecord) => {
+    try {
+      setIsDeletingHolidayId(holiday.id);
+      setHolidaysError('');
+      await deleteHoliday(holiday.id, token);
+      setHolidays(current => current.filter(savedHoliday => savedHoliday.id !== holiday.id));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to delete holiday.';
+      setHolidaysError(message);
+    } finally {
+      setIsDeletingHolidayId(null);
+    }
+  };
+
   const handleRefresh = useCallback(async () => {
     try {
       setIsRefreshing(true);
@@ -278,8 +380,11 @@ export default function MainTabsScreen({
 
       if (isAdmin) {
         await loadUsers();
+        await loadHolidays();
       }
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise<void>(resolve => {
+        setTimeout(resolve, 300);
+      });
     } catch (error) {
       setUsersError(
         error instanceof Error ? error.message : 'Unable to refresh data.',
@@ -287,7 +392,7 @@ export default function MainTabsScreen({
     } finally {
       setIsRefreshing(false);
     }
-  }, [isAdmin, loadUsers, onUpdateLoggedInUser, token]);
+  }, [isAdmin, loadHolidays, loadUsers, onUpdateLoggedInUser, token]);
 
   const tabItems: TabItem[] = isAdmin
     ? [
@@ -324,11 +429,6 @@ export default function MainTabsScreen({
           icon: activeTab === 'sales' ? 'cash' : 'cash-outline',
           key: 'sales',
           label: 'Values',
-        },
-        {
-          icon: activeTab === 'targets' ? 'flag' : 'flag-outline',
-          key: 'targets',
-          label: 'Targets',
         },
         {
           icon:
@@ -387,24 +487,34 @@ export default function MainTabsScreen({
             activeSection={adminSection}
             adminCount={adminCount}
             form={form}
+            holidayForm={holidayForm}
+            holidays={holidays}
+            holidaysError={holidaysError}
             isCreatingUser={isCreatingUser}
+            isDeletingHolidayId={isDeletingHolidayId}
             isDeletingUserId={isDeletingUserId}
+            isLoadingHolidays={isLoadingHolidays}
             isLoadingUsers={isLoadingUsers}
             isModalVisible={isModalVisible}
+            isSavingHoliday={isSavingHoliday}
             isUpdatingUser={isUpdatingUser}
             modalError={modalError}
             onChangeSection={setAdminSection}
             onCloseModal={() => setIsModalVisible(false)}
+            onDeleteHoliday={handleDeleteHoliday}
             onDeleteUser={handleDeleteUser}
             onEditUser={openEditModal}
             onLogout={onLogout}
             onOpenModal={openCreateModal}
             onResetForm={resetForm}
+            onSaveHoliday={handleSaveHoliday}
             onSaveUser={handleSaveUser}
+            onUpdateHolidayForm={updateHolidayForm}
             onUpdateForm={updateForm}
             roleOptions={roleOptions}
             selectedUser={selectedUser}
             summaryCards={summaryCards}
+            token={token}
             user={currentUser}
             users={users}
             usersError={usersError}

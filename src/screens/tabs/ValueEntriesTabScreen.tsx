@@ -56,6 +56,9 @@ const getInitialDateParts = () => {
   };
 };
 
+const formatDateValue = ({ day, month, year }: ReturnType<typeof getInitialDateParts>) =>
+  `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
 const formatEntryDate = (entryDate: string) => {
   const date = new Date(`${entryDate}T00:00:00`);
 
@@ -115,9 +118,14 @@ export default function ValueEntriesTabScreen({
       ),
     [month, year],
   );
+  const todayDateValue = formatDateValue(getInitialDateParts());
   const filteredEntries = useMemo(
     () =>
       entries.filter(entry => {
+        if (!isAdmin) {
+          return entry.entryDate === todayDateValue;
+        }
+
         const entryDate = new Date(`${entry.entryDate}T00:00:00`);
 
         return (
@@ -125,7 +133,7 @@ export default function ValueEntriesTabScreen({
           entryDate.getFullYear() === filterYear
         );
       }),
-    [entries, filterMonth, filterYear],
+    [entries, filterMonth, filterYear, isAdmin, todayDateValue],
   );
 
   const loadEntries = useCallback(async () => {
@@ -168,9 +176,11 @@ export default function ValueEntriesTabScreen({
   }, [day, dayOptions]);
 
   const resetFormState = () => {
-    setDay(initialDate.day);
-    setMonth(initialDate.month);
-    setYear(initialDate.year);
+    const today = getInitialDateParts();
+
+    setDay(today.day);
+    setMonth(today.month);
+    setYear(today.year);
     setPickerType(null);
     setPurchaseAmount('');
     setSellAmount('');
@@ -312,26 +322,28 @@ export default function ValueEntriesTabScreen({
           </Pressable>
         </View>
 
-        <View style={styles.topFilterRow}>
-          <Pressable
-            onPress={() => setPickerType('filterMonth')}
-            style={styles.topFilterControl}>
-            <Text style={styles.topFilterLabel}>Month</Text>
-            <View style={styles.topFilterValueRow}>
-              <Text style={styles.topFilterValue}>{monthLabels[filterMonth - 1]}</Text>
-              <Ionicons color="#7f1d1d" name="chevron-down" size={16} />
-            </View>
-          </Pressable>
-          <Pressable
-            onPress={() => setPickerType('filterYear')}
-            style={styles.topFilterControl}>
-            <Text style={styles.topFilterLabel}>Year</Text>
-            <View style={styles.topFilterValueRow}>
-              <Text style={styles.topFilterValue}>{filterYear}</Text>
-              <Ionicons color="#7f1d1d" name="chevron-down" size={16} />
-            </View>
-          </Pressable>
-        </View>
+        {isAdmin ? (
+          <View style={styles.topFilterRow}>
+            <Pressable
+              onPress={() => setPickerType('filterMonth')}
+              style={styles.topFilterControl}>
+              <Text style={styles.topFilterLabel}>Month</Text>
+              <View style={styles.topFilterValueRow}>
+                <Text style={styles.topFilterValue}>{monthLabels[filterMonth - 1]}</Text>
+                <Ionicons color="#7f1d1d" name="chevron-down" size={16} />
+              </View>
+            </Pressable>
+            <Pressable
+              onPress={() => setPickerType('filterYear')}
+              style={styles.topFilterControl}>
+              <Text style={styles.topFilterLabel}>Year</Text>
+              <View style={styles.topFilterValueRow}>
+                <Text style={styles.topFilterValue}>{filterYear}</Text>
+                <Ionicons color="#7f1d1d" name="chevron-down" size={16} />
+              </View>
+            </Pressable>
+          </View>
+        ) : null}
 
         {isLoadingEntries ? (
           <View style={styles.loadingState}>
@@ -417,7 +429,9 @@ export default function ValueEntriesTabScreen({
             </Pressable>
           ))
         ) : (
-          <Text style={styles.emptyText}>No entries found for this month.</Text>
+          <Text style={styles.emptyText}>
+            {isAdmin ? 'No entries found for this month.' : 'No entries found for today.'}
+          </Text>
         )}
       </View>
 
@@ -443,7 +457,7 @@ export default function ValueEntriesTabScreen({
             <Text style={styles.sectionCaption}>
               {isAdmin
                 ? 'Select a user, set the date, and save purchase and sell values.'
-                : 'Select the date and save your purchase and sell values.'}
+                : 'Save your purchase and sell values for today.'}
             </Text>
 
             <ScrollView
@@ -469,38 +483,42 @@ export default function ValueEntriesTabScreen({
                 </>
               ) : null}
 
-              <Text style={[styles.fieldLabel, styles.fieldLabelDate]}>Date</Text>
-              <View style={styles.filterRow}>
-                <View style={styles.filterControl}>
-                  <Text style={styles.fieldLabelInline}>Day</Text>
-                  <Pressable
-                    onPress={() => setPickerType('day')}
-                    style={styles.selectField}>
-                    <Text style={styles.selectFieldValue}>{day}</Text>
-                    <Ionicons color="#7f1d1d" name="chevron-down" size={18} />
-                  </Pressable>
-                </View>
+              {isAdmin ? (
+                <>
+                  <Text style={[styles.fieldLabel, styles.fieldLabelDate]}>Date</Text>
+                  <View style={styles.filterRow}>
+                    <View style={styles.filterControl}>
+                      <Text style={styles.fieldLabelInline}>Day</Text>
+                      <Pressable
+                        onPress={() => setPickerType('day')}
+                        style={styles.selectField}>
+                        <Text style={styles.selectFieldValue}>{day}</Text>
+                        <Ionicons color="#7f1d1d" name="chevron-down" size={18} />
+                      </Pressable>
+                    </View>
 
-                <View style={styles.filterControl}>
-                  <Text style={styles.fieldLabelInline}>Month</Text>
-                  <Pressable
-                    onPress={() => setPickerType('month')}
-                    style={styles.selectField}>
-                    <Text style={styles.selectFieldValue}>{monthLabels[month - 1]}</Text>
-                    <Ionicons color="#7f1d1d" name="chevron-down" size={18} />
-                  </Pressable>
-                </View>
+                    <View style={styles.filterControl}>
+                      <Text style={styles.fieldLabelInline}>Month</Text>
+                      <Pressable
+                        onPress={() => setPickerType('month')}
+                        style={styles.selectField}>
+                        <Text style={styles.selectFieldValue}>{monthLabels[month - 1]}</Text>
+                        <Ionicons color="#7f1d1d" name="chevron-down" size={18} />
+                      </Pressable>
+                    </View>
 
-                <View style={styles.filterControl}>
-                  <Text style={styles.fieldLabelInline}>Year</Text>
-                  <Pressable
-                    onPress={() => setPickerType('year')}
-                    style={styles.selectField}>
-                    <Text style={styles.selectFieldValue}>{year}</Text>
-                    <Ionicons color="#7f1d1d" name="chevron-down" size={18} />
-                  </Pressable>
-                </View>
-              </View>
+                    <View style={styles.filterControl}>
+                      <Text style={styles.fieldLabelInline}>Year</Text>
+                      <Pressable
+                        onPress={() => setPickerType('year')}
+                        style={styles.selectField}>
+                        <Text style={styles.selectFieldValue}>{year}</Text>
+                        <Ionicons color="#7f1d1d" name="chevron-down" size={18} />
+                      </Pressable>
+                    </View>
+                  </View>
+                </>
+              ) : null}
 
               <TextInput
                 keyboardType="numeric"

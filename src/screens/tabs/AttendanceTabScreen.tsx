@@ -21,7 +21,9 @@ import {
   createAttendanceAction,
   fetchAttendance,
   fetchMyAttendance,
+  updateAttendanceRecord,
   type AttendanceActionType,
+  type AttendanceLog,
   type AttendanceRecord,
 } from '../../services/attendance';
 
@@ -40,7 +42,7 @@ const monthLabels = [
   'December',
 ];
 
-type PickerType = 'month' | 'user' | 'year' | null;
+type PickerType = 'month' | 'time' | 'user' | 'year' | null;
 
 type AttendanceTabScreenProps = {
   isAdmin: boolean;
@@ -54,6 +56,17 @@ type AttendanceActionButton = {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   tint: string;
+};
+
+type EditableAttendanceLog = {
+  action: AttendanceActionType;
+  address?: string | null;
+  distanceMeters?: number | null;
+  id: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  notes?: string | null;
+  time: string;
 };
 
 const actionButtons: AttendanceActionButton[] = [
@@ -207,6 +220,54 @@ const formatTimeLabel = (value: string) => {
   });
 };
 
+const formatTimeInputValue = (value: string) => {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return date.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    hour12: false,
+    minute: '2-digit',
+  });
+};
+
+const isValidTimeInput = (value: string) => {
+  if (!/^\d{2}:\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [hours, minutes] = value.split(':').map(Number);
+
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+};
+
+const buildEditableLogs = (logs: AttendanceLog[]): EditableAttendanceLog[] => {
+  const editableLogs = logs.map(log => ({
+    action: log.action,
+    address: log.address,
+    distanceMeters: log.distanceMeters,
+    id: log.id,
+    latitude: log.latitude,
+    longitude: log.longitude,
+    notes: log.notes,
+    time: formatTimeInputValue(log.recordedAt),
+  }));
+
+  const existingActions = new Set(editableLogs.map(log => log.action));
+  const missingActionLogs = actionButtons
+    .filter(button => !existingActions.has(button.action))
+    .map(button => ({
+      action: button.action,
+      id: `new-${button.action}`,
+      time: '',
+    }));
+
+  return [...editableLogs, ...missingActionLogs];
+};
+
 const formatDistanceLabel = (distanceMeters: number) => {
   if (!Number.isFinite(distanceMeters)) {
     return '0 m';
@@ -325,14 +386,20 @@ export default function AttendanceTabScreen({
   const [draftMonth, setDraftMonth] = useState(initialMonthYear.month);
   const [draftSelectedUserId, setDraftSelectedUserId] = useState('');
   const [draftYear, setDraftYear] = useState(initialMonthYear.year);
+  const [editableLogs, setEditableLogs] = useState<EditableAttendanceLog[]>([]);
   const [isActionLoading, setIsActionLoading] = useState<AttendanceActionType | null>(null);
+  const [isEditingAttendance, setIsEditingAttendance] = useState(false);
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
+  const [isSavingAttendanceEdit, setIsSavingAttendanceEdit] = useState(false);
   const [month, setMonth] = useState(initialMonthYear.month);
   const [pickerType, setPickerType] = useState<PickerType>(null);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [recordsError, setRecordsError] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [selectedTimeLogId, setSelectedTimeLogId] = useState<string | null>(null);
+  const [timePickerHour, setTimePickerHour] = useState('09');
+  const [timePickerMinute, setTimePickerMinute] = useState('00');
   const [year, setYear] = useState(initialMonthYear.year);
 
   const userOptions = useMemo(
@@ -365,6 +432,14 @@ export default function AttendanceTabScreen({
     const currentYear = new Date().getFullYear();
     return Array.from({ length: 7 }, (_, index) => currentYear - 3 + index);
   }, []);
+  const hourOptions = useMemo(
+    () => Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0')),
+    [],
+  );
+  const minuteOptions = useMemo(
+    () => Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0')),
+    [],
+  );
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -438,6 +513,26 @@ export default function AttendanceTabScreen({
     });
   }, [loadRecords, refreshSignal]);
 
+  useEffect(() => {
+    if (!detailRecord) {
+      setEditableLogs([]);
+      setIsEditingAttendance(false);
+    }
+  }, [detailRecord]);
+
+  const openDetailRecord = (record: AttendanceRecord, shouldEdit = false) => {
+    setRecordsError('');
+    setDetailRecord(record);
+    setEditableLogs(buildEditableLogs(record.logs));
+    setIsEditingAttendance(shouldEdit);
+  };
+
+  const closeDetailRecord = () => {
+    setDetailRecord(null);
+    setEditableLogs([]);
+    setIsEditingAttendance(false);
+  };
+
   const handleAttendanceAction = async (action: AttendanceActionType) => {
     if (!ATTENDANCE_OFFICE_LOCATION) {
       setRecordsError(
@@ -499,9 +594,102 @@ export default function AttendanceTabScreen({
     }
   };
 
+  const updateEditableLogTime = (logId: string, time: string) => {
+    setEditableLogs(current =>
+      current.map(log => (log.id === logId ? { ...log, time } : log)),
+    );
+  };
+
+  const openTimePicker = (log: EditableAttendanceLog) => {
+    const [hour = '09', minute = '00'] = log.time.split(':');
+
+    setSelectedTimeLogId(log.id);
+    setTimePickerHour(isValidTimeInput(`${hour}:${minute}`) ? hour : '09');
+    setTimePickerMinute(isValidTimeInput(`${hour}:${minute}`) ? minute : '00');
+    setPickerType('time');
+  };
+
+  const applyTimePicker = () => {
+    if (!selectedTimeLogId) {
+      return;
+    }
+
+    updateEditableLogTime(selectedTimeLogId, `${timePickerHour}:${timePickerMinute}`);
+    setSelectedTimeLogId(null);
+    setPickerType(null);
+  };
+
+  const clearTimePicker = () => {
+    if (selectedTimeLogId) {
+      updateEditableLogTime(selectedTimeLogId, '');
+    }
+
+    setSelectedTimeLogId(null);
+    setPickerType(null);
+  };
+
+  const closePicker = () => {
+    setSelectedTimeLogId(null);
+    setPickerType(null);
+  };
+
+  const handleSaveAttendanceEdit = async () => {
+    if (!detailRecord) {
+      return;
+    }
+
+    const logsToSave = editableLogs
+      .map(log => ({
+        ...log,
+        time: log.time.trim(),
+      }))
+      .filter(log => log.time);
+
+    const invalidLog = logsToSave.find(log => !isValidTimeInput(log.time));
+
+    if (invalidLog) {
+      setRecordsError(`${actionLabelMap[invalidLog.action]} time must be in HH:mm format.`);
+      return;
+    }
+
+    try {
+      setIsSavingAttendanceEdit(true);
+      setRecordsError('');
+
+      const savedRecord = await updateAttendanceRecord(token, detailRecord.id, {
+        attendanceDate: detailRecord.attendanceDate,
+        logs: logsToSave.map(log => ({
+          action: log.action,
+          address: log.address,
+          distanceMeters: log.distanceMeters,
+          latitude: log.latitude,
+          longitude: log.longitude,
+          notes: log.notes,
+          time: log.time,
+        })),
+        userId: detailRecord.userId,
+      });
+
+      setRecords(current =>
+        current.map(record => (record.id === detailRecord.id ? savedRecord : record)),
+      );
+      setDetailRecord(savedRecord);
+      setEditableLogs(buildEditableLogs(savedRecord.logs));
+      setIsEditingAttendance(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to update attendance record.';
+      setRecordsError(message);
+    } finally {
+      setIsSavingAttendanceEdit(false);
+    }
+  };
+
   const pickerTitle =
     pickerType === 'user'
       ? 'Select User'
+      : pickerType === 'time'
+        ? 'Select Time'
       : pickerType === 'month'
         ? 'Select Month'
         : pickerType === 'year'
@@ -618,10 +806,10 @@ export default function AttendanceTabScreen({
             <Text style={styles.errorText}>{recordsError}</Text>
           ) : records.length ? (
             records.map(record => (
-              <Pressable
-                key={record.id}
-                onPress={() => setDetailRecord(record)}
-                style={styles.recordRow}>
+              <View key={record.id} style={styles.recordRow}>
+                <Pressable
+                  onPress={() => openDetailRecord(record)}
+                  style={styles.recordContentButton}>
                 <View style={styles.recordRowLeft}>
                   <Text style={styles.recordPrimary}>
                     {isAdmin ? record.username : formatDateLabel(record.attendanceDate)}
@@ -661,7 +849,16 @@ export default function AttendanceTabScreen({
                     {formatDuration(calculateWorkedMilliseconds(record, currentTimestamp))}
                   </Text>
                 </View>
-              </Pressable>
+                </Pressable>
+                {isAdmin ? (
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => openDetailRecord(record, true)}
+                    style={styles.recordEditButton}>
+                    <Ionicons color="#7f1d1d" name="pencil" size={16} />
+                  </Pressable>
+                ) : null}
+              </View>
             ))
           ) : (
             <Text style={styles.emptyText}>No attendance records found for this period.</Text>
@@ -671,10 +868,10 @@ export default function AttendanceTabScreen({
 
       <Modal
         animationType="slide"
-        onRequestClose={() => setDetailRecord(null)}
+        onRequestClose={closeDetailRecord}
         transparent
         visible={Boolean(detailRecord)}>
-        <Pressable onPress={() => setDetailRecord(null)} style={styles.modalOverlay}>
+        <Pressable onPress={closeDetailRecord} style={styles.modalOverlay}>
           <Pressable onPress={() => {}} style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View>
@@ -693,15 +890,27 @@ export default function AttendanceTabScreen({
                   </Text>
                 ) : null}
               </View>
-              <Pressable
-                hitSlop={10}
-                onPress={() => setDetailRecord(null)}
-                style={styles.closeButton}>
-                <Ionicons color="#6b7280" name="close" size={22} />
-              </Pressable>
+              <View style={styles.modalHeaderActions}>
+                {isAdmin && isEditingAttendance ? (
+                  <Pressable
+                    disabled={isSavingAttendanceEdit}
+                    onPress={() => setIsEditingAttendance(false)}
+                    style={styles.viewButton}>
+                    <Ionicons color="#b91c1c" name="eye-outline" size={16} />
+                    <Text style={styles.viewButtonText}>View</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  hitSlop={10}
+                  onPress={closeDetailRecord}
+                  style={styles.closeButton}>
+                  <Ionicons color="#6b7280" name="close" size={22} />
+                </Pressable>
+              </View>
             </View>
 
             <ScrollView
+              nestedScrollEnabled
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.modalScrollContent}>
               {detailRecord ? (
@@ -731,7 +940,55 @@ export default function AttendanceTabScreen({
                     </Text>
                   </View>
 
-                  {detailRecord.logs.length ? (
+                  {isAdmin && isEditingAttendance ? (
+                    <>
+                      {editableLogs.map(log => (
+                        <View key={log.id} style={styles.editLogRow}>
+                          <Text style={styles.fieldLabel}>{actionLabelMap[log.action]}</Text>
+                          <Pressable
+                            onPress={() => openTimePicker(log)}
+                            style={styles.timeSelectButton}>
+                            <Text
+                              style={[
+                                styles.timeSelectText,
+                                !log.time && styles.timeSelectPlaceholder,
+                              ]}>
+                              {log.time || 'Select time'}
+                            </Text>
+                            <Ionicons color="#7f1d1d" name="time-outline" size={18} />
+                          </Pressable>
+                        </View>
+                      ))}
+                      {recordsError ? (
+                        <Text style={styles.errorText}>{recordsError}</Text>
+                      ) : null}
+                      <View style={styles.filterActions}>
+                        <Pressable
+                          disabled={isSavingAttendanceEdit}
+                          onPress={() => {
+                            setEditableLogs(buildEditableLogs(detailRecord.logs));
+                            setIsEditingAttendance(false);
+                            setRecordsError('');
+                          }}
+                          style={styles.secondaryButton}>
+                          <Text style={styles.secondaryButtonText}>Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          disabled={isSavingAttendanceEdit}
+                          onPress={handleSaveAttendanceEdit}
+                          style={[
+                            styles.primaryButton,
+                            isSavingAttendanceEdit && styles.primaryButtonDisabled,
+                          ]}>
+                          {isSavingAttendanceEdit ? (
+                            <ActivityIndicator color="#ffffff" />
+                          ) : (
+                            <Text style={styles.primaryButtonText}>Save</Text>
+                          )}
+                        </Pressable>
+                      </View>
+                    </>
+                  ) : detailRecord.logs.length ? (
                     detailRecord.logs.map(log => (
                       <View key={log.id} style={styles.logCard}>
                         <View style={styles.logHeader}>
@@ -843,13 +1100,82 @@ export default function AttendanceTabScreen({
 
       <Modal
         animationType="fade"
-        onRequestClose={() => setPickerType(null)}
+        onRequestClose={closePicker}
         transparent
         visible={Boolean(pickerType)}>
-        <Pressable onPress={() => setPickerType(null)} style={styles.modalOverlay}>
+        <Pressable onPress={closePicker} style={styles.modalOverlay}>
           <Pressable onPress={() => {}} style={styles.pickerCard}>
             <Text style={styles.modalTitle}>{pickerTitle}</Text>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView
+              nestedScrollEnabled
+              scrollEnabled={pickerType !== 'time'}
+              showsVerticalScrollIndicator={false}>
+              {pickerType === 'time' ? (
+                <>
+                  <View style={styles.timePickerColumns}>
+                    <View style={styles.timePickerColumn}>
+                      <Text style={styles.fieldLabel}>Hour</Text>
+                      <ScrollView nestedScrollEnabled style={styles.timePickerList}>
+                        {hourOptions.map(optionHour => {
+                          const isSelected = optionHour === timePickerHour;
+
+                          return (
+                            <Pressable
+                              key={optionHour}
+                              onPress={() => setTimePickerHour(optionHour)}
+                              style={[
+                                styles.timeOption,
+                                isSelected && styles.timeOptionSelected,
+                              ]}>
+                              <Text
+                                style={[
+                                  styles.timeOptionText,
+                                  isSelected && styles.timeOptionTextSelected,
+                                ]}>
+                                {optionHour}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                    <View style={styles.timePickerColumn}>
+                      <Text style={styles.fieldLabel}>Minute</Text>
+                      <ScrollView nestedScrollEnabled style={styles.timePickerList}>
+                        {minuteOptions.map(optionMinute => {
+                          const isSelected = optionMinute === timePickerMinute;
+
+                          return (
+                            <Pressable
+                              key={optionMinute}
+                              onPress={() => setTimePickerMinute(optionMinute)}
+                              style={[
+                                styles.timeOption,
+                                isSelected && styles.timeOptionSelected,
+                              ]}>
+                              <Text
+                                style={[
+                                  styles.timeOptionText,
+                                  isSelected && styles.timeOptionTextSelected,
+                                ]}>
+                                {optionMinute}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  </View>
+                  <View style={styles.filterActions}>
+                    <Pressable onPress={clearTimePicker} style={styles.secondaryButton}>
+                      <Text style={styles.secondaryButtonText}>Clear</Text>
+                    </Pressable>
+                    <Pressable onPress={applyTimePicker} style={styles.primaryButton}>
+                      <Text style={styles.primaryButtonText}>Done</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : null}
               {pickerType === 'month'
                 ? monthLabels.map((monthLabel, index) => {
                     const optionMonth = index + 1;
@@ -1216,6 +1542,23 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     padding: 14,
   },
+  recordContentButton: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  recordEditButton: {
+    alignItems: 'center',
+    backgroundColor: '#fff7f5',
+    borderColor: '#fecaca',
+    borderRadius: 14,
+    borderWidth: 1,
+    height: 38,
+    justifyContent: 'center',
+    marginLeft: 10,
+    width: 38,
+  },
   recordRowLeft: {
     flex: 1,
     paddingRight: 12,
@@ -1294,6 +1637,26 @@ const styles = StyleSheet.create({
   closeButton: {
     paddingLeft: 12,
   },
+  modalHeaderActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  viewButton: {
+    alignItems: 'center',
+    backgroundColor: '#fff7f5',
+    borderColor: '#fecaca',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  viewButtonText: {
+    color: '#b91c1c',
+    fontSize: 13,
+    fontWeight: '700',
+    marginLeft: 6,
+  },
   modalScrollContent: {
     paddingBottom: 8,
   },
@@ -1316,10 +1679,69 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 12,
   },
+  primaryButtonDisabled: {
+    opacity: 0.7,
+  },
   primaryButtonText: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '700',
+  },
+  editLogRow: {
+    backgroundColor: '#fffdfc',
+    borderColor: '#fee2e2',
+    borderRadius: 18,
+    borderWidth: 1,
+    marginBottom: 10,
+    padding: 14,
+  },
+  timeSelectButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#fecaca',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  timeSelectText: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  timeSelectPlaceholder: {
+    color: '#9ca3af',
+  },
+  timePickerColumns: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 14,
+  },
+  timePickerColumn: {
+    flex: 1,
+  },
+  timePickerList: {
+    maxHeight: 260,
+  },
+  timeOption: {
+    alignItems: 'center',
+    backgroundColor: '#fff7f5',
+    borderRadius: 14,
+    marginBottom: 8,
+    paddingVertical: 12,
+  },
+  timeOptionSelected: {
+    backgroundColor: '#dc2626',
+  },
+  timeOptionText: {
+    color: '#111827',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  timeOptionTextSelected: {
+    color: '#ffffff',
   },
   detailSummaryCard: {
     alignItems: 'center',

@@ -54,6 +54,22 @@ export type SaveAttendanceActionInput = {
   longitude: number;
 };
 
+export type UpdateAttendanceLogInput = {
+  action: AttendanceActionType;
+  address?: string | null;
+  distanceMeters?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  notes?: string | null;
+  time: string;
+};
+
+export type UpdateAttendanceRecordInput = {
+  attendanceDate: string;
+  logs: UpdateAttendanceLogInput[];
+  userId: string;
+};
+
 function buildAttendanceQuery({ month, userId, year }: AttendanceFilterInput) {
   const query = new URLSearchParams({
     month: String(month),
@@ -128,6 +144,29 @@ export async function createAttendanceAction(
 
   if (!response.ok || !payload.success || !payload.data) {
     throw new Error(payload.message || 'Failed to save attendance action');
+  }
+
+  return payload.data;
+}
+
+export async function updateAttendanceRecord(
+  token: string,
+  recordId: string,
+  input: UpdateAttendanceRecordInput,
+) {
+  const response = await fetch(buildApiUrl(`/attendance/${recordId}`), {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+
+  const payload = (await response.json()) as AttendanceRecordResponse;
+
+  if (!response.ok || !payload.success || !payload.data) {
+    throw new Error(payload.message || 'Failed to update attendance record');
   }
 
   return payload.data;

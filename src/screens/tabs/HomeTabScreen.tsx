@@ -110,6 +110,10 @@ export default function HomeTabScreen({
   const entranceAnimation = useRef(new Animated.Value(0)).current;
   const progressAnimation = useRef(new Animated.Value(0)).current;
   const [adminError, setAdminError] = useState('');
+  const [adminMonthlyProfitTotal, setAdminMonthlyProfitTotal] = useState(0);
+  const [adminMonthlySlices, setAdminMonthlySlices] = useState<ProfitSlice[]>([]);
+  const [adminMonthlySellTotal, setAdminMonthlySellTotal] = useState(0);
+  const [adminProfitRange, setAdminProfitRange] = useState<'yearly' | 'monthly'>('yearly');
   const [adminSellTotal, setAdminSellTotal] = useState(0);
   const [adminSlices, setAdminSlices] = useState<ProfitSlice[]>([]);
   const [adminTargetSlices, setAdminTargetSlices] = useState<TargetSlice[]>([]);
@@ -258,30 +262,60 @@ export default function HomeTabScreen({
         fetchValueEntries(token),
         fetchTargets(token),
       ]);
-      setAdminSellTotal(entries.reduce((sum, entry) => sum + entry.sellAmount, 0));
-      const totals = new Map<string, number>();
+      const currentYearEntries = entries.filter(entry => {
+        const entryDate = new Date(`${entry.entryDate}T00:00:00`);
 
-      entries.forEach(entry => {
-        if (entry.netProfit <= 0) {
-          return;
-        }
+        return entryDate.getFullYear() === initialMonthYear.year;
+      });
+      const currentMonthEntries = currentYearEntries.filter(entry => {
+        const entryDate = new Date(`${entry.entryDate}T00:00:00`);
 
-        const currentProfit = totals.get(entry.username) ?? 0;
-        totals.set(entry.username, currentProfit + entry.netProfit);
+        return entryDate.getMonth() + 1 === initialMonthYear.month;
       });
 
-      const sortedSlices = Array.from(totals.entries())
-        .sort((first, second) => second[1] - first[1])
-        .map(([label, value], index, source) => ({
+      setAdminSellTotal(
+        currentYearEntries.reduce((sum, entry) => sum + entry.sellAmount, 0),
+      );
+      setAdminMonthlySellTotal(
+        currentMonthEntries.reduce((sum, entry) => sum + entry.sellAmount, 0),
+      );
+      setAdminMonthlyProfitTotal(
+        currentMonthEntries.reduce(
+          (sum, entry) => sum + Math.max(entry.netProfit, 0),
+          0,
+        ),
+      );
+      const buildProfitSlices = (sourceEntries: ValueEntryRecord[]) => {
+        const totals = new Map<string, number>();
+
+        sourceEntries.forEach(entry => {
+          if (entry.netProfit <= 0) {
+            return;
+          }
+
+          const currentProfit = totals.get(entry.username) ?? 0;
+          totals.set(entry.username, currentProfit + entry.netProfit);
+        });
+
+        const totalAmount = Array.from(totals.values()).reduce(
+          (sum, amount) => sum + amount,
+          0,
+        );
+
+        return Array.from(totals.entries())
+          .sort((first, second) => second[1] - first[1])
+          .map(([label, value], index) => ({
           color: chartColors[index % chartColors.length],
           label,
-          percentage: source.length
-            ? Number(((value / source.reduce((sum, [, amount]) => sum + amount, 0)) * 100).toFixed(1))
+            percentage: totalAmount > 0
+              ? Number(((value / totalAmount) * 100).toFixed(1))
             : 0,
           value,
-        }));
+          }));
+      };
 
-      setAdminSlices(sortedSlices);
+      setAdminSlices(buildProfitSlices(currentYearEntries));
+      setAdminMonthlySlices(buildProfitSlices(currentMonthEntries));
 
       const currentMonthTargets = targetData.filter(
         targetItem =>
@@ -420,11 +454,21 @@ export default function HomeTabScreen({
     }).start();
   }, [isAdmin, progressAnimation, targetCompletionPercent]);
 
+  const activeAdminProfitSlices =
+    adminProfitRange === 'yearly' ? adminSlices : adminMonthlySlices;
+  const activeAdminProfitTotal =
+    adminProfitRange === 'yearly' ? totalProfit : adminMonthlyProfitTotal;
+  const activeAdminProfitSubtitle =
+    adminProfitRange === 'yearly'
+      ? 'Yearly contribution share across all users.'
+      : 'Current month contribution share across all users.';
+  const activeAdminProfitEmptyMessage =
+    adminProfitRange === 'yearly'
+      ? 'No positive net profit entries available yet'
+      : 'No positive net profit entries available for this month';
   const pickerTitle = pickerType === 'month' ? 'Select Month' : 'Select Year';
 
   if (isAdmin) {
-    let currentAngle = 0;
-
     return (
       <View style={styles.adminWrap}>
         <View style={styles.adminOverviewCard}>
@@ -436,15 +480,27 @@ export default function HomeTabScreen({
 
           <View style={styles.adminStatGrid}>
             <View style={styles.adminStatCard}>
-              <Text style={styles.adminStatLabel}>Net Profit</Text>
+              <Text style={styles.adminStatLabel}>Yearly Net Profit</Text>
               <Text style={styles.adminStatValue}>
                 Rs. {Math.round(totalProfit).toLocaleString('en-IN')}
               </Text>
             </View>
             <View style={styles.adminStatCard}>
-              <Text style={styles.adminStatLabel}>Total Sell</Text>
+              <Text style={styles.adminStatLabel}>Yearly Total Sell</Text>
               <Text style={styles.adminStatValue}>
                 Rs. {Math.round(adminSellTotal).toLocaleString('en-IN')}
+              </Text>
+            </View>
+            <View style={styles.adminStatCard}>
+              <Text style={styles.adminStatLabel}>Monthly Net Profit</Text>
+              <Text style={styles.adminStatValue}>
+                Rs. {Math.round(adminMonthlyProfitTotal).toLocaleString('en-IN')}
+              </Text>
+            </View>
+            <View style={styles.adminStatCard}>
+              <Text style={styles.adminStatLabel}>Monthly Sell</Text>
+              <Text style={styles.adminStatValue}>
+                Rs. {Math.round(adminMonthlySellTotal).toLocaleString('en-IN')}
               </Text>
             </View>
             <View style={styles.adminStatCard}>
@@ -464,14 +520,48 @@ export default function HomeTabScreen({
 
         <View style={styles.adminProfitCard}>
           <View style={styles.adminSectionHeader}>
-            <View>
+            <View style={styles.adminSectionTitleWrap}>
               <Text style={styles.homeTitle}>Profit Overview</Text>
               <Text style={styles.homeSubtitle}>
-                Contribution share across all users.
+                {activeAdminProfitSubtitle}
               </Text>
             </View>
+          </View>
+          <View style={styles.adminProfitControls}>
+            <View style={styles.adminChartTabs}>
+              <Pressable
+                onPress={() => setAdminProfitRange('yearly')}
+                style={[
+                  styles.adminChartTab,
+                  adminProfitRange === 'yearly' && styles.adminChartTabActive,
+                ]}>
+                <Text
+                  style={[
+                    styles.adminChartTabText,
+                    adminProfitRange === 'yearly' && styles.adminChartTabTextActive,
+                  ]}>
+                  Yearly
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setAdminProfitRange('monthly')}
+                style={[
+                  styles.adminChartTab,
+                  adminProfitRange === 'monthly' && styles.adminChartTabActive,
+                ]}>
+                <Text
+                  style={[
+                    styles.adminChartTabText,
+                    adminProfitRange === 'monthly' && styles.adminChartTabTextActive,
+                  ]}>
+                  Monthly
+                </Text>
+              </Pressable>
+            </View>
             <View style={styles.adminUsersPill}>
-              <Text style={styles.adminUsersPillText}>{adminSlices.length} users</Text>
+              <Text style={styles.adminUsersPillText}>
+                {activeAdminProfitSlices.length} users
+              </Text>
             </View>
           </View>
 
@@ -482,25 +572,35 @@ export default function HomeTabScreen({
             </View>
           ) : adminError ? (
             <Text style={styles.errorText}>{adminError}</Text>
-          ) : adminSlices.length ? (
+          ) : activeAdminProfitSlices.length ? (
             <>
               <View style={styles.adminProfitLayout}>
                 <View style={styles.adminPiePanel}>
                   <Svg height={220} width={220} viewBox="0 0 220 220">
                     <Circle cx="110" cy="110" fill="#fff4f2" r="84" />
-                    {adminSlices.map(slice => {
-                      const sweepAngle = (slice.percentage / 100) * 360;
-                      const path = buildSlicePath(110, 110, 84, currentAngle, currentAngle + sweepAngle);
-                      currentAngle += sweepAngle;
+                    {(() => {
+                      let chartAngle = 0;
 
-                      return <Path key={slice.label} d={path} fill={slice.color} />;
-                    })}
+                      return activeAdminProfitSlices.map(slice => {
+                        const sweepAngle = (slice.percentage / 100) * 360;
+                        const path = buildSlicePath(
+                          110,
+                          110,
+                          84,
+                          chartAngle,
+                          chartAngle + sweepAngle,
+                        );
+                        chartAngle += sweepAngle;
+
+                        return <Path key={slice.label} d={path} fill={slice.color} />;
+                      });
+                    })()}
                     <Circle cx="110" cy="110" fill="#ffffff" r="44" />
                   </Svg>
                   <View style={styles.adminChartCenter}>
                     <Text style={styles.adminChartCenterCurrency}>Rs.</Text>
                     <Text style={styles.adminChartCenterValue}>
-                      {Math.round(totalProfit).toLocaleString('en-IN')}
+                      {Math.round(activeAdminProfitTotal).toLocaleString('en-IN')}
                     </Text>
                     <Text style={styles.adminChartCenterLabel}>Net Profit</Text>
                   </View>
@@ -508,7 +608,7 @@ export default function HomeTabScreen({
               </View>
 
               <View style={styles.adminLegendList}>
-                {adminSlices.map(slice => (
+                {activeAdminProfitSlices.map(slice => (
                   <View key={slice.label} style={styles.adminLegendRow}>
                     <View style={styles.legendUserWrap}>
                       <View style={[styles.adminLegendDot, { backgroundColor: slice.color }]} />
@@ -527,7 +627,7 @@ export default function HomeTabScreen({
           ) : (
             <View style={styles.homePlaceholder}>
               <Text style={styles.homePlaceholderText}>
-                No positive net profit entries available yet
+                {activeAdminProfitEmptyMessage}
               </Text>
             </View>
           )}
@@ -973,10 +1073,50 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   adminSectionHeader: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
+    gap: 12,
     justifyContent: 'space-between',
     marginBottom: 18,
+  },
+  adminSectionTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  adminProfitControls: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  adminChartTabs: {
+    backgroundColor: '#fff1ee',
+    borderColor: '#fee2e2',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexShrink: 1,
+    flexDirection: 'row',
+    padding: 3,
+  },
+  adminChartTab: {
+    borderRadius: 999,
+    minWidth: 78,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  adminChartTabActive: {
+    backgroundColor: '#dc2626',
+  },
+  adminChartTabText: {
+    color: '#9a3412',
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  adminChartTabTextActive: {
+    color: '#ffffff',
   },
   adminUsersPill: {
     backgroundColor: '#fff1ee',

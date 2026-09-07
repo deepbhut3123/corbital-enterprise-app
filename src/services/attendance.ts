@@ -1,10 +1,6 @@
 import { buildApiUrl } from '../config/api';
 
-export type AttendanceActionType =
-  | 'check_in'
-  | 'break_start'
-  | 'break_end'
-  | 'check_out';
+export type AttendanceActionType = 'check_in' | 'check_out';
 
 export type AttendanceLog = {
   action: AttendanceActionType;

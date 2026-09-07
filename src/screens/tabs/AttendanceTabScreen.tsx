@@ -42,6 +42,8 @@ const monthLabels = [
   'December',
 ];
 
+const FULL_DAY_MINUTES = 8 * 60;
+
 type PickerType = 'month' | 'time' | 'user' | 'year' | null;
 
 type AttendanceTabScreenProps = {
@@ -73,25 +75,13 @@ const actionButtons: AttendanceActionButton[] = [
   {
     action: 'check_in',
     icon: 'log-in-outline',
-    label: 'Check In',
+    label: 'Punch In',
     tint: '#15803d',
-  },
-  {
-    action: 'break_start',
-    icon: 'cafe-outline',
-    label: 'Break Start',
-    tint: '#b45309',
-  },
-  {
-    action: 'break_end',
-    icon: 'play-outline',
-    label: 'Break End',
-    tint: '#2563eb',
   },
   {
     action: 'check_out',
     icon: 'log-out-outline',
-    label: 'Check Out',
+    label: 'Punch Out',
     tint: '#dc2626',
   },
 ];
@@ -118,37 +108,27 @@ const calculateWorkedMilliseconds = (
     return Math.max(record.totalMinutes, 0) * 60000;
   }
 
-  let activeStartTimestamp: number | null = null;
-  let totalMilliseconds = 0;
+  const punchIn = sortedLogs.find(log => log.action === 'check_in');
+  const punchOut = [...sortedLogs]
+    .reverse()
+    .find(log => log.action === 'check_out');
 
-  sortedLogs.forEach(log => {
-    const logTimestamp = new Date(log.recordedAt).getTime();
-
-    if (log.action === 'check_in' || log.action === 'break_end') {
-      activeStartTimestamp = logTimestamp;
-      return;
-    }
-
-    if (
-      (log.action === 'break_start' || log.action === 'check_out') &&
-      activeStartTimestamp
-    ) {
-      totalMilliseconds += Math.max(logTimestamp - activeStartTimestamp, 0);
-      activeStartTimestamp = null;
-    }
-  });
-
-  if (activeStartTimestamp) {
-    totalMilliseconds += Math.max(nowTimestamp - activeStartTimestamp, 0);
+  if (!punchIn) {
+    return Math.max(record.totalMinutes, 0) * 60000;
   }
 
-  return totalMilliseconds;
+  const startTimestamp = new Date(punchIn.recordedAt).getTime();
+  const endTimestamp = punchOut
+    ? new Date(punchOut.recordedAt).getTime()
+    : nowTimestamp;
+
+  return Math.max(endTimestamp - startTimestamp, 0);
 };
 
 const isAttendanceRecordActive = (record: Pick<AttendanceRecord, 'logs'>) => {
   const lastLog = record.logs[record.logs.length - 1];
 
-  return lastLog?.action === 'check_in' || lastLog?.action === 'break_end';
+  return lastLog?.action === 'check_in';
 };
 
 const formatDuration = (durationMilliseconds: number) => {
@@ -205,7 +185,7 @@ const getAttendanceStatusLabel = (record: AttendanceRecord) => {
     calculateWorkedMilliseconds(record, Date.now()) / 60000,
   );
 
-  return workedMinutes >= 510 ? 'Present' : 'Half Day';
+  return workedMinutes >= FULL_DAY_MINUTES ? 'Present' : 'Half Day';
 };
 
 const getAttendanceStatusStyle = (record: AttendanceRecord) =>
@@ -281,10 +261,8 @@ const formatDistanceLabel = (distanceMeters: number) => {
 };
 
 const actionLabelMap: Record<AttendanceActionType, string> = {
-  break_end: 'Break End',
-  break_start: 'Break Start',
-  check_in: 'Check In',
-  check_out: 'Check Out',
+  check_in: 'Punch In',
+  check_out: 'Punch Out',
 };
 
 const getTodayAttendanceDate = () => {
@@ -312,11 +290,7 @@ const getAllowedNextActions = (
 
   switch (lastAction) {
     case 'check_in':
-      return ['break_start', 'check_out'];
-    case 'break_start':
-      return ['break_end'];
-    case 'break_end':
-      return ['break_start', 'check_out'];
+      return ['check_out'];
     case 'check_out':
       return [];
     default:
@@ -338,15 +312,7 @@ const getActionStatusLabel = (
   }
 
   if (action === 'check_in') {
-    return 'Already started';
-  }
-
-  if (action === 'break_start') {
-    return 'Not active now';
-  }
-
-  if (action === 'break_end') {
-    return 'Break not started';
+    return 'Already punched in';
   }
 
   return 'Not available';
@@ -707,7 +673,7 @@ export default function AttendanceTabScreen({
             <Text style={styles.sectionCaption}>
               {isAdmin
                 ? 'Check current attendance records user by user with month and year filters.'
-                : 'Track your attendance actions and review your monthly records.'}
+                : 'Punch in, punch out, and review your monthly attendance records.'}
             </Text>
           </View>
         </View>

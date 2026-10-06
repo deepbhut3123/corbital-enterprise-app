@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Easing,
   Modal,
@@ -12,7 +13,11 @@ import {
 } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
-import type { LoggedInUser } from '../../services/auth';
+import type { LoggedInUser, UserRecord } from '../../services/auth';
+import {
+  downloadProfitOverviewReport,
+  type ProfitOverviewReportRow,
+} from '../../services/profitReports';
 import { fetchMyTarget, fetchTargets, type TargetRecord } from '../../services/targets';
 import { fetchValueEntries, type ValueEntryRecord } from '../../services/valueEntries';
 
@@ -37,6 +42,7 @@ type HomeTabScreenProps = {
   refreshSignal: number;
   token: string;
   user: LoggedInUser;
+  users: UserRecord[];
 };
 
 type ProfitSlice = {
@@ -105,19 +111,22 @@ export default function HomeTabScreen({
   refreshSignal,
   token,
   user,
+  users,
 }: HomeTabScreenProps) {
   const initialMonthYear = useMemo(() => getInitialMonthYear(), []);
   const entranceAnimation = useRef(new Animated.Value(0)).current;
   const progressAnimation = useRef(new Animated.Value(0)).current;
   const [adminError, setAdminError] = useState('');
+  const [adminEntries, setAdminEntries] = useState<ValueEntryRecord[]>([]);
   const [adminMonthlyProfitTotal, setAdminMonthlyProfitTotal] = useState(0);
-  const [adminMonthlySlices, setAdminMonthlySlices] = useState<ProfitSlice[]>([]);
   const [adminMonthlySellTotal, setAdminMonthlySellTotal] = useState(0);
   const [adminProfitRange, setAdminProfitRange] = useState<'yearly' | 'monthly'>('yearly');
   const [adminSellTotal, setAdminSellTotal] = useState(0);
   const [adminSlices, setAdminSlices] = useState<ProfitSlice[]>([]);
   const [adminTargetSlices, setAdminTargetSlices] = useState<TargetSlice[]>([]);
   const [isLoadingAdminChart, setIsLoadingAdminChart] = useState(false);
+  const [isDownloadingProfitReport, setIsDownloadingProfitReport] = useState(false);
+  const [profitReportError, setProfitReportError] = useState('');
   const [isLoadingUserProgress, setIsLoadingUserProgress] = useState(false);
   const [isLoadingTarget, setIsLoadingTarget] = useState(false);
   const [month, setMonth] = useState(initialMonthYear.month);
@@ -129,8 +138,87 @@ export default function HomeTabScreen({
   const [year, setYear] = useState(initialMonthYear.year);
   const yearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
-    return Array.from({ length: 7 }, (_, index) => currentYear - 3 + index);
-  }, []);
+    const oldestEntryYear = adminEntries.reduce((oldestYear, entry) => {
+      const entryYear = Number(entry.entryDate.slice(0, 4));
+      return Number.isInteger(entryYear) ? Math.min(oldestYear, entryYear) : oldestYear;
+    }, currentYear);
+    const firstYear = Math.min(oldestEntryYear, currentYear - 5);
+
+    return Array.from(
+      { length: currentYear - firstYear + 1 },
+      (_, index) => currentYear - index,
+    );
+  }, [adminEntries]);
+  const adminProfitRows = useMemo<ProfitOverviewReportRow[]>(() => {
+    const rowsByUserId = new Map<string, ProfitOverviewReportRow>();
+
+    users
+      .filter(listUser => {
+        const role = String(listUser.roleId).trim().toLowerCase();
+        return role !== '1' && role !== 'admin';
+      })
+      .forEach(listUser => {
+        rowsByUserId.set(listUser.id, {
+          email: listUser.email,
+          entryCount: 0,
+          netProfit: 0,
+          purchaseAmount: 0,
+          sellAmount: 0,
+          username: listUser.username,
+        });
+      });
+
+    adminEntries.forEach(entry => {
+      const entryDate = new Date(`${entry.entryDate}T00:00:00`);
+      const isInSelectedPeriod =
+        entryDate.getFullYear() === year &&
+        (adminProfitRange === 'yearly' || entryDate.getMonth() + 1 === month);
+
+      if (!isInSelectedPeriod) {
+        return;
+      }
+
+      const current = rowsByUserId.get(entry.userId) ?? {
+        email: entry.userEmail,
+        entryCount: 0,
+        netProfit: 0,
+        purchaseAmount: 0,
+        sellAmount: 0,
+        username: entry.username,
+      };
+
+      rowsByUserId.set(entry.userId, {
+        ...current,
+        entryCount: current.entryCount + 1,
+        netProfit: current.netProfit + entry.netProfit,
+        purchaseAmount: current.purchaseAmount + entry.purchaseAmount,
+        sellAmount: current.sellAmount + entry.sellAmount,
+      });
+    });
+
+    return Array.from(rowsByUserId.values())
+      .filter(row => row.netProfit > 0)
+      .sort(
+        (first, second) =>
+          second.netProfit - first.netProfit || first.username.localeCompare(second.username),
+      );
+  }, [adminEntries, adminProfitRange, month, users, year]);
+  const activeAdminProfitTotal = useMemo(
+    () => adminProfitRows.reduce((sum, row) => sum + row.netProfit, 0),
+    [adminProfitRows],
+  );
+  const activeAdminProfitSlices = useMemo<ProfitSlice[]>(() => {
+    const positiveRows = adminProfitRows.filter(row => row.netProfit > 0);
+    const positiveTotal = positiveRows.reduce((sum, row) => sum + row.netProfit, 0);
+
+    return positiveRows.map((row, index) => ({
+      color: chartColors[index % chartColors.length],
+      label: row.username,
+      percentage:
+        positiveTotal > 0 ? Number(((row.netProfit / positiveTotal) * 100).toFixed(1)) : 0,
+      value: row.netProfit,
+    }));
+  }, [adminProfitRows]);
   const totalProfit = useMemo(
     () => adminSlices.reduce((sum, slice) => sum + slice.value, 0),
     [adminSlices],
@@ -262,6 +350,7 @@ export default function HomeTabScreen({
         fetchValueEntries(token),
         fetchTargets(token),
       ]);
+      setAdminEntries(entries);
       const currentYearEntries = entries.filter(entry => {
         const entryDate = new Date(`${entry.entryDate}T00:00:00`);
 
@@ -315,7 +404,6 @@ export default function HomeTabScreen({
       };
 
       setAdminSlices(buildProfitSlices(currentYearEntries));
-      setAdminMonthlySlices(buildProfitSlices(currentMonthEntries));
 
       const currentMonthTargets = targetData.filter(
         targetItem =>
@@ -454,19 +542,36 @@ export default function HomeTabScreen({
     }).start();
   }, [isAdmin, progressAnimation, targetCompletionPercent]);
 
-  const activeAdminProfitSlices =
-    adminProfitRange === 'yearly' ? adminSlices : adminMonthlySlices;
-  const activeAdminProfitTotal =
-    adminProfitRange === 'yearly' ? totalProfit : adminMonthlyProfitTotal;
   const activeAdminProfitSubtitle =
     adminProfitRange === 'yearly'
-      ? 'Yearly contribution share across all users.'
-      : 'Current month contribution share across all users.';
+      ? `All users' net profit for ${year}.`
+      : `All users' net profit for ${monthLabels[month - 1]} ${year}.`;
   const activeAdminProfitEmptyMessage =
     adminProfitRange === 'yearly'
-      ? 'No positive net profit entries available yet'
-      : 'No positive net profit entries available for this month';
+      ? 'No users contributed positive profit in this year.'
+      : 'No users contributed positive profit in this month.';
   const pickerTitle = pickerType === 'month' ? 'Select Month' : 'Select Year';
+
+  const handleDownloadProfitReport = async () => {
+    try {
+      setIsDownloadingProfitReport(true);
+      setProfitReportError('');
+      const fileUri = await downloadProfitOverviewReport({
+        month: adminProfitRange === 'monthly' ? month : undefined,
+        period: adminProfitRange,
+        rows: adminProfitRows,
+        year,
+      });
+
+      Alert.alert('PDF saved', `Profit overview PDF saved successfully.\n${fileUri}`);
+    } catch (error) {
+      setProfitReportError(
+        error instanceof Error ? error.message : 'Unable to create profit overview PDF.',
+      );
+    } finally {
+      setIsDownloadingProfitReport(false);
+    }
+  };
 
   if (isAdmin) {
     return (
@@ -560,9 +665,26 @@ export default function HomeTabScreen({
             </View>
             <View style={styles.adminUsersPill}>
               <Text style={styles.adminUsersPillText}>
-                {activeAdminProfitSlices.length} users
+                {adminProfitRows.length} users
               </Text>
             </View>
+          </View>
+
+          <View style={styles.adminPeriodFilters}>
+            {adminProfitRange === 'monthly' ? (
+              <Pressable
+                onPress={() => setPickerType('month')}
+                style={styles.adminPeriodButton}>
+                <Text style={styles.adminPeriodLabel}>Month</Text>
+                <Text style={styles.adminPeriodValue}>{monthLabels[month - 1]}</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => setPickerType('year')}
+              style={styles.adminPeriodButton}>
+              <Text style={styles.adminPeriodLabel}>Year</Text>
+              <Text style={styles.adminPeriodValue}>{year}</Text>
+            </Pressable>
           </View>
 
           {isLoadingAdminChart ? (
@@ -572,57 +694,104 @@ export default function HomeTabScreen({
             </View>
           ) : adminError ? (
             <Text style={styles.errorText}>{adminError}</Text>
-          ) : activeAdminProfitSlices.length ? (
+          ) : adminProfitRows.length ? (
             <>
-              <View style={styles.adminProfitLayout}>
-                <View style={styles.adminPiePanel}>
-                  <Svg height={220} width={220} viewBox="0 0 220 220">
-                    <Circle cx="110" cy="110" fill="#fff4f2" r="84" />
-                    {(() => {
-                      let chartAngle = 0;
+              {activeAdminProfitSlices.length ? (
+                <View style={styles.adminProfitLayout}>
+                  <View style={styles.adminPiePanel}>
+                    <Svg height={220} width={220} viewBox="0 0 220 220">
+                      <Circle cx="110" cy="110" fill="#fff4f2" r="84" />
+                      {(() => {
+                        let chartAngle = 0;
 
-                      return activeAdminProfitSlices.map(slice => {
-                        const sweepAngle = (slice.percentage / 100) * 360;
-                        const path = buildSlicePath(
-                          110,
-                          110,
-                          84,
-                          chartAngle,
-                          chartAngle + sweepAngle,
-                        );
-                        chartAngle += sweepAngle;
+                        return activeAdminProfitSlices.map(slice => {
+                          const sweepAngle = (slice.percentage / 100) * 360;
+                          const path = buildSlicePath(
+                            110,
+                            110,
+                            84,
+                            chartAngle,
+                            chartAngle + sweepAngle,
+                          );
+                          chartAngle += sweepAngle;
 
-                        return <Path key={slice.label} d={path} fill={slice.color} />;
-                      });
-                    })()}
-                    <Circle cx="110" cy="110" fill="#ffffff" r="44" />
-                  </Svg>
-                  <View style={styles.adminChartCenter}>
-                    <Text style={styles.adminChartCenterCurrency}>Rs.</Text>
-                    <Text style={styles.adminChartCenterValue}>
-                      {Math.round(activeAdminProfitTotal).toLocaleString('en-IN')}
-                    </Text>
-                    <Text style={styles.adminChartCenterLabel}>Net Profit</Text>
+                          return <Path key={slice.label} d={path} fill={slice.color} />;
+                        });
+                      })()}
+                      <Circle cx="110" cy="110" fill="#ffffff" r="44" />
+                    </Svg>
+                    <View style={styles.adminChartCenter}>
+                      <Text style={styles.adminChartCenterCurrency}>Rs.</Text>
+                      <Text style={styles.adminChartCenterValue}>
+                        {Math.round(activeAdminProfitTotal).toLocaleString('en-IN')}
+                      </Text>
+                      <Text style={styles.adminChartCenterLabel}>Net Profit</Text>
+                    </View>
                   </View>
                 </View>
-              </View>
+              ) : (
+                <View style={styles.homePlaceholder}>
+                  <Text style={styles.homePlaceholderText}>
+                    No positive profit to chart for this period.
+                  </Text>
+                </View>
+              )}
 
               <View style={styles.adminLegendList}>
-                {activeAdminProfitSlices.map(slice => (
-                  <View key={slice.label} style={styles.adminLegendRow}>
-                    <View style={styles.legendUserWrap}>
-                      <View style={[styles.adminLegendDot, { backgroundColor: slice.color }]} />
-                      <Text style={styles.adminLegendLabel}>{slice.label}</Text>
+                {adminProfitRows.map(row => {
+                  const slice = activeAdminProfitSlices.find(item => item.label === row.username);
+
+                  return (
+                    <View key={`${row.username}-${row.email}`} style={styles.adminLegendRow}>
+                      <View style={styles.legendUserWrap}>
+                        <View
+                          style={[
+                            styles.adminLegendDot,
+                            { backgroundColor: slice?.color ?? '#d1d5db' },
+                          ]}
+                        />
+                        <View>
+                          <Text style={styles.adminLegendLabel}>{row.username}</Text>
+                          <Text style={styles.adminLegendMeta}>{row.entryCount} entries</Text>
+                        </View>
+                      </View>
+                      <View style={styles.legendValues}>
+                        <Text
+                          style={[
+                            styles.adminLegendPercentage,
+                            row.netProfit < 0 && styles.adminLegendNegative,
+                          ]}>
+                          {slice ? `${slice.percentage}%` : '—'}
+                        </Text>
+                        <Text style={styles.adminLegendAmount}>
+                          Rs. {Math.round(row.netProfit).toLocaleString('en-IN')}
+                        </Text>
+                      </View>
                     </View>
-                    <View style={styles.legendValues}>
-                      <Text style={styles.adminLegendPercentage}>{slice.percentage}%</Text>
-                      <Text style={styles.adminLegendAmount}>
-                        Rs. {Math.round(slice.value).toLocaleString('en-IN')}
-                      </Text>
-                    </View>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
+
+              {profitReportError ? (
+                <Text style={styles.errorText}>{profitReportError}</Text>
+              ) : null}
+              <Pressable
+                disabled={isDownloadingProfitReport}
+                onPress={() => {
+                  handleDownloadProfitReport().catch(() => {
+                    // handleDownloadProfitReport stores a user-facing error.
+                  });
+                }}
+                style={[
+                  styles.profitDownloadButton,
+                  isDownloadingProfitReport && styles.profitDownloadButtonDisabled,
+                ]}>
+                {isDownloadingProfitReport ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.profitDownloadButtonText}>Download PDF</Text>
+                )}
+              </Pressable>
             </>
           ) : (
             <View style={styles.homePlaceholder}>
@@ -720,6 +889,59 @@ export default function HomeTabScreen({
             </View>
           )}
         </View>
+
+        <Modal
+          animationType="fade"
+          onRequestClose={() => setPickerType(null)}
+          transparent
+          visible={pickerType !== null}>
+          <View style={styles.pickerOverlay}>
+            <Pressable style={styles.pickerBackdrop} onPress={() => setPickerType(null)} />
+            <View style={styles.pickerCard}>
+              <View style={styles.pickerHeader}>
+                <Text style={styles.pickerTitle}>{pickerTitle}</Text>
+                <Pressable onPress={() => setPickerType(null)} style={styles.pickerClose}>
+                  <Text style={styles.pickerCloseText}>x</Text>
+                </Pressable>
+              </View>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                style={styles.pickerScroll}
+                contentContainerStyle={styles.pickerScrollContent}>
+                {(pickerType === 'month' ? monthLabels : yearOptions).map(
+                  (option, index) => {
+                    const optionValue = pickerType === 'month' ? index + 1 : Number(option);
+                    const isSelected =
+                      pickerType === 'month' ? optionValue === month : optionValue === year;
+
+                    return (
+                      <Pressable
+                        key={String(option)}
+                        onPress={() => {
+                          if (pickerType === 'month') {
+                            setMonth(optionValue);
+                          } else {
+                            setYear(optionValue);
+                          }
+                          setProfitReportError('');
+                          setPickerType(null);
+                        }}
+                        style={[styles.optionRow, isSelected && styles.optionRowActive]}>
+                        <Text
+                          style={[
+                            styles.optionLabel,
+                            isSelected && styles.optionLabelActive,
+                          ]}>
+                          {option}
+                        </Text>
+                      </Pressable>
+                    );
+                  },
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -1091,6 +1313,32 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 18,
   },
+  adminPeriodFilters: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 18,
+  },
+  adminPeriodButton: {
+    backgroundColor: '#ffffff',
+    borderColor: '#fecaca',
+    borderRadius: 16,
+    borderWidth: 1,
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  adminPeriodLabel: {
+    color: '#9a3412',
+    fontSize: 9,
+    fontWeight: '800',
+    marginBottom: 3,
+    textTransform: 'uppercase',
+  },
+  adminPeriodValue: {
+    color: '#111827',
+    fontSize: 14,
+    fontWeight: '800',
+  },
   adminChartTabs: {
     backgroundColor: '#fff1ee',
     borderColor: '#fee2e2',
@@ -1452,15 +1700,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  adminLegendMeta: {
+    color: '#9ca3af',
+    fontSize: 10,
+    marginTop: 2,
+  },
   adminLegendPercentage: {
     color: '#b91c1c',
     fontSize: 14,
     fontWeight: '800',
   },
+  adminLegendNegative: {
+    color: '#dc2626',
+  },
   adminLegendAmount: {
     color: '#6b7280',
     fontSize: 12,
     marginTop: 2,
+  },
+  profitDownloadButton: {
+    alignItems: 'center',
+    backgroundColor: '#b91c1c',
+    borderRadius: 16,
+    justifyContent: 'center',
+    marginTop: 18,
+    minHeight: 48,
+    paddingHorizontal: 18,
+  },
+  profitDownloadButtonDisabled: {
+    opacity: 0.6,
+  },
+  profitDownloadButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
   },
   userDashboardCard: {
     backgroundColor: '#ffffff',

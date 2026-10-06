@@ -472,6 +472,7 @@ export default function MainTabsScreen({
             refreshSignal={refreshSignal}
             token={token}
             user={currentUser}
+            users={users}
           />
         ) : activeTab === 'profile' ? (
           <View style={styles.profileTabContent}>
